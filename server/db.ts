@@ -1,6 +1,6 @@
-import { eq } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users } from "../drizzle/schema";
+import { InsertUser, users, monitoredItems, InsertMonitoredItem, changeLogs, InsertChangeLog } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -87,6 +87,104 @@ export async function getUserByOpenId(openId: string) {
   const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
 
   return result.length > 0 ? result[0] : undefined;
+}
+
+/**
+ * 모니터링 대상 목록 조회
+ */
+export async function getMonitoredItems(filters?: { type?: 'law' | 'rule'; isActive?: boolean }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  let query = db.select().from(monitoredItems) as any;
+  if (filters?.type) {
+    query = query.where(eq(monitoredItems.type, filters.type));
+  }
+  if (filters?.isActive !== undefined) {
+    query = query.where(eq(monitoredItems.isActive, filters.isActive ? 1 : 0));
+  }
+  return query.execute();
+}
+
+/**
+ * 모니터링 대상 추가
+ */
+export async function addMonitoredItem(item: InsertMonitoredItem) {
+  const db = await getDb();
+  if (!db) throw new Error('Database not available');
+  return db.insert(monitoredItems).values(item);
+}
+
+/**
+ * 모니터링 대상 업데이트
+ */
+export async function updateMonitoredItem(id: number, updates: Partial<InsertMonitoredItem>) {
+  const db = await getDb();
+  if (!db) throw new Error('Database not available');
+  return db.update(monitoredItems).set(updates).where(eq(monitoredItems.id, id));
+}
+
+/**
+ * 모니터링 대상 삭제
+ */
+export async function deleteMonitoredItem(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error('Database not available');
+  return db.delete(monitoredItems).where(eq(monitoredItems.id, id));
+}
+
+/**
+ * 변경 로그 조회 (최근 1년 및 미래 시행 예정)
+ */
+export async function getChangeLogs(filters?: { itemId?: number; status?: 'current' | 'upcoming'; limit?: number }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  let query = db.select().from(changeLogs) as any;
+  if (filters?.itemId) {
+    query = query.where(eq(changeLogs.itemId, filters.itemId));
+  }
+  if (filters?.status) {
+    query = query.where(eq(changeLogs.status, filters.status));
+  }
+  query = query.orderBy(desc(changeLogs.effectiveDate));
+  if (filters?.limit) {
+    query = query.limit(filters.limit);
+  }
+  return query.execute();
+}
+
+/**
+ * 변경 로그 추가
+ */
+export async function addChangeLog(log: InsertChangeLog) {
+  const db = await getDb();
+  if (!db) throw new Error('Database not available');
+  return db.insert(changeLogs).values(log);
+}
+
+/**
+ * 변경 로그 업데이트
+ */
+export async function updateChangeLog(id: number, updates: Partial<InsertChangeLog>) {
+  const db = await getDb();
+  if (!db) throw new Error('Database not available');
+  return db.update(changeLogs).set(updates).where(eq(changeLogs.id, id));
+}
+
+/**
+ * 특정 항목의 최신 변경 로그 조회
+ */
+export async function getLatestChangeLogForItem(itemId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db
+    .select()
+    .from(changeLogs)
+    .where(eq(changeLogs.itemId, itemId))
+    .orderBy(desc(changeLogs.effectiveDate))
+    .limit(1);
+  return result.length > 0 ? result[0] : null;
 }
 
 // TODO: add feature queries here as your schema grows.

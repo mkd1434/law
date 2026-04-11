@@ -43,15 +43,16 @@
 }
 
 :root {
-  --primary: var(--color-blue-700);
-  --primary-foreground: var(--color-blue-50);
-  --sidebar-primary: var(--color-blue-600);
-  --sidebar-primary-foreground: var(--color-blue-50);
-  --chart-1: var(--color-blue-300);
-  --chart-2: var(--color-blue-500);
-  --chart-3: var(--color-blue-600);
-  --chart-4: var(--color-blue-700);
-  --chart-5: var(--color-blue-800);
+  /* Modern Minimal Design - Purple to Cyan Gradient */
+  --primary: oklch(0.55 0.25 270); /* Purple */
+  --primary-foreground: oklch(0.98 0.001 270);
+  --sidebar-primary: oklch(0.50 0.25 270);
+  --sidebar-primary-foreground: oklch(0.98 0.001 270);
+  --chart-1: oklch(0.65 0.20 270); /* Purple lighter */
+  --chart-2: oklch(0.60 0.22 270); /* Purple */
+  --chart-3: oklch(0.55 0.25 270); /* Purple darker */
+  --chart-4: oklch(0.55 0.25 180); /* Cyan */
+  --chart-5: oklch(0.50 0.25 180); /* Cyan darker */
   --radius: 0.65rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.235 0.015 65);

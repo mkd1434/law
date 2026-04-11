@@ -11,12 +11,16 @@ import { vitePluginManusRuntime } from "vite-plugin-manus-runtime";
 // Writes browser logs directly to files, trimmed when exceeding size limit
 // =============================================================================
 
-// 프로젝트 루트 경로 (절대 경로)
-const PROJECT_ROOT = import.meta.dirname || process.cwd();
+// 프로젝트 루트 경로 (절대 경로) - 항상 유효한 값 보장
+const PROJECT_ROOT = import.meta.dirname || process.cwd() || '.';
 const LOG_DIR = path.join(PROJECT_ROOT, ".manus-logs");
 
-// 환경 변수 기본값 설정
+// 환경 변수 기본값 설정 (모든 변수에 기본값 제공)
 const NODE_ENV = process.env.NODE_ENV || 'development';
+const CLIENT_DIR = process.env.CLIENT_DIR || path.join(PROJECT_ROOT, 'client');
+const SHARED_DIR = process.env.SHARED_DIR || path.join(PROJECT_ROOT, 'shared');
+const ASSETS_DIR = process.env.ASSETS_DIR || path.join(PROJECT_ROOT, 'attached_assets');
+const DIST_DIR = process.env.DIST_DIR || path.join(PROJECT_ROOT, 'dist/public');
 const MAX_LOG_SIZE_BYTES = 1 * 1024 * 1024; // 1MB per log file
 const TRIM_TARGET_BYTES = Math.floor(MAX_LOG_SIZE_BYTES * 0.6); // Trim to 60% to avoid constant re-trimming
 
@@ -160,16 +164,16 @@ export default defineConfig({
   plugins,
   resolve: {
     alias: {
-      "@": path.resolve(import.meta.dirname, "client", "src"),
-      "@shared": path.resolve(import.meta.dirname, "shared"),
-      "@assets": path.resolve(import.meta.dirname, "attached_assets"),
+      "@": path.resolve(CLIENT_DIR || '.', "src"),
+      "@shared": path.resolve(SHARED_DIR || '.'),
+      "@assets": path.resolve(ASSETS_DIR || '.'),
     },
   },
-  envDir: path.resolve(import.meta.dirname),
-  root: path.resolve(import.meta.dirname, "client"),
-  publicDir: path.resolve(import.meta.dirname, "client", "public"),
+  envDir: path.resolve(PROJECT_ROOT || '.'),
+  root: path.resolve(CLIENT_DIR || '.'),
+  publicDir: path.resolve(CLIENT_DIR || '.', "public"),
   build: {
-    outDir: path.resolve(import.meta.dirname, "dist/public"),
+    outDir: path.resolve(DIST_DIR || '.'),
     emptyOutDir: true,
   },
   server: {
@@ -189,3 +193,10 @@ export default defineConfig({
     },
   },
 });
+
+// 디버그: 설정 값 로깅 (개발 환경에서만)
+if (NODE_ENV === 'development') {
+  console.log('[Vite Config] PROJECT_ROOT:', PROJECT_ROOT);
+  console.log('[Vite Config] CLIENT_DIR:', CLIENT_DIR);
+  console.log('[Vite Config] DIST_DIR:', DIST_DIR);
+}

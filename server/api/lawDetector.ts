@@ -24,8 +24,15 @@ export async function detectAndCollectLawChanges(
 
   try {
     // Step 1: 법령 변경이력 조회
+    // 최근 1년 내의 변경이력을 조회 (최신 변경일부터 시작)
     console.log(`[Law] Fetching change history for ${lawName} (ID: ${lawId})`);
-    const changeHistory = await lawAPIClient.getLawChangeHistory(lawId);
+    
+    // 최근 1년 내의 날짜 계산
+    const today = new Date();
+    const oneYearAgo = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate());
+    const regDt = formatDateForAPI(oneYearAgo);
+    
+    const changeHistory = await lawAPIClient.getLawChangeHistory(regDt);
 
     if (!changeHistory || !changeHistory.data) {
       errors.push(`No change history found for ${lawName}`);
@@ -40,12 +47,13 @@ export async function detectAndCollectLawChanges(
     // Step 2: 각 변경사항에 대해 신구법 비교 데이터 수집
     for (const change of changes) {
       try {
-        const changeId = change.changeId || change.id;
-        const effectiveDate = parseDate(change.effectiveDate || change.시행일자);
-        const announcementNo = change.announcementNo || change.공고번호 || '';
+        // API 응답 필드 매핑 (한글/영문 혼합 가능)
+        const changeId = change.법령일련번호 || change.lawId || change.id;
+        const effectiveDate = parseDate(change.시행일자 || change.effectiveDate);
+        const announcementNo = change.공포번호 || change.announcementNo || '';
 
-        if (!changeId || !effectiveDate) {
-          console.warn(`[Law] Skipping change due to missing data:`, change);
+        if (!effectiveDate) {
+          console.warn(`[Law] Skipping change due to missing effective date:`, change);
           continue;
         }
 
@@ -61,24 +69,31 @@ export async function detectAndCollectLawChanges(
           continue;
         }
 
-        // Step 3: 신구법 비교 본문 조회
-        console.log(`[Law] Fetching comparison data for change ${changeId}`);
-        const comparisonData = await lawAPIClient.getLawComparison({ MST: lawId });
+        // Step 3: 신구법 본문 조회
+        // MST 또는 ID 중 하나 사용
+        const mst = change.법령일련번호 || change.lawMST || changeId;
+        console.log(`[Law] Fetching comparison data for MST ${mst}`);
+        const comparisonData = await lawAPIClient.getLawComparison({ MST: String(mst) });
 
         // Step 4: DB에 저장
         const changeLog: InsertChangeLog = {
           itemId,
-          announcementNo,
+          announcementNo: announcementNo || `${formatDateForAPI(today)}_${changeId}`,
           effectiveDate,
           status: status as 'current' | 'upcoming',
-          comparisonData: comparisonData || null,
-          rawData: change,
+          comparisonData: JSON.stringify(comparisonData) || null,
+          rawData: JSON.stringify(change) || null,
         };
 
-        await addChangeLog(changeLog);
-        collectedCount++;
-
-        console.log(`[Law] Successfully collected change: ${announcementNo}`);
+        try {
+          await addChangeLog(changeLog);
+          collectedCount++;
+          console.log(`[Law] Successfully collected change: ${announcementNo}`);
+        } catch (dbError) {
+          const dbErrorMsg = dbError instanceof Error ? dbError.message : 'Unknown error';
+          console.error(`[Law] DB error for ${announcementNo}:`, dbErrorMsg);
+          // DB 오류는 기록하지만 계속 진행
+        }
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : 'Unknown error';
         console.error(`[Law] Error processing change:`, errorMsg);
@@ -86,12 +101,22 @@ export async function detectAndCollectLawChanges(
       }
     }
   } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+    const errorMsg = error instanceof Error ? error.message : String(error);
     console.error(`[Law] Error detecting changes for ${lawName}:`, errorMsg);
     errors.push(`Error detecting changes: ${errorMsg}`);
   }
 
   return { detected: detectedCount, collected: collectedCount, errors };
+}
+
+/**
+ * API 요청용 날짜 포맧 변환 (YYYYMMDD)
+ */
+function formatDateForAPI(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}${month}${day}`;
 }
 
 /**

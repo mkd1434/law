@@ -3,13 +3,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, FileText, AlertCircle, CheckCircle2, Search } from 'lucide-react';
+import { Loader2, FileText, AlertCircle, CheckCircle2, Search, ChevronDown, ChevronUp } from 'lucide-react';
 import { trpc } from '@/lib/trpc';
 import { Link } from 'wouter';
 
 /**
  * 법령 및 행정규칙 통합 모니터링 시스템 - 메인 페이지
- * 최근 1년 이내의 개정 사항 및 미래 시행 예정 목록을 표시
+ * 최근 3년 이내의 개정 사항 및 미래 시행 예정 목록을 표시
  * 
  * 로그인 불필요 - 누구나 바로 메인 화면 접근 가능
  * 데이터는 페이지 로드 시 자동으로 조회됨
@@ -17,6 +17,7 @@ import { Link } from 'wouter';
 export default function Home() {
   const [selectedTab, setSelectedTab] = useState<'law' | 'rule'>('law');
   const [searchQuery, setSearchQuery] = useState('');
+  const [showMonitoredItems, setShowMonitoredItems] = useState(false);
 
   // 모니터링 대상 조회 (로그인 불필요 - 항상 활성화)
   const { data: monitoredItems, isLoading: itemsLoading } = trpc.monitoring.getMonitoredItems.useQuery(
@@ -33,8 +34,8 @@ export default function Home() {
   const isLoading = itemsLoading || logsLoading;
 
   /**
-   * 최근 1년 조건 필터링 및 타입별 분류
-   * - 1년 이내: 현재 날짜 기준 365일 이내
+   * 최근 3년 조건 필터링 및 타입별 분류
+   * - 3년 이내: 현재 날짜 기준 1095일 이내
    * - 타입별: 선택된 탭(law/rule)에 해당하는 항목만
    * - 상태별: current와 upcoming으로 분류
    * - 검색: 공고번호 또는 법령명으로 검색
@@ -115,7 +116,7 @@ export default function Home() {
 
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium text-gray-600">최근 개정 (1년 이내)</CardTitle>
+                  <CardTitle className="text-sm font-medium text-gray-600">최근 개정 (3년 이내)</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <p className="text-3xl font-bold text-cyan-600">{filteredChangeLogs.current.length}</p>
@@ -131,6 +132,49 @@ export default function Home() {
                 </CardContent>
               </Card>
             </div>
+
+            {/* 모니터링 대상 목록 (접을 수 있는 섹션) */}
+            <Card>
+              <CardHeader>
+                <button
+                  onClick={() => setShowMonitoredItems(!showMonitoredItems)}
+                  className="w-full flex items-center justify-between hover:bg-gray-50 p-2 rounded transition-colors"
+                >
+                  <div className="flex items-center gap-2">
+                    <CardTitle className="text-base">모니터링 대상 목록</CardTitle>
+                    <Badge variant="outline">{monitoredItems?.length || 0}개</Badge>
+                  </div>
+                  {showMonitoredItems ? (
+                    <ChevronUp className="w-5 h-5 text-gray-600" />
+                  ) : (
+                    <ChevronDown className="w-5 h-5 text-gray-600" />
+                  )}
+                </button>
+              </CardHeader>
+              {showMonitoredItems && (
+                <CardContent>
+                  {monitoredItems && monitoredItems.length > 0 ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {monitoredItems.map((item: any) => (
+                        <div key={item.id} className="p-3 border border-gray-200 rounded-lg bg-gray-50 hover:bg-purple-50 transition-colors">
+                          <p className="font-medium text-gray-900">{item.name}</p>
+                          <div className="flex items-center gap-2 mt-2">
+                            <Badge variant="secondary" className="text-xs">
+                              {item.type === 'law' ? '법령' : '규칙'}
+                            </Badge>
+                            {item.externalId && (
+                              <span className="text-xs text-gray-500">MST: {item.externalId}</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-gray-500 text-center py-4">모니터링 대상이 없습니다.</p>
+                  )}
+                </CardContent>
+              )}
+            </Card>
 
             {/* 로딩 상태 */}
             {isLoading && (
@@ -176,7 +220,7 @@ export default function Home() {
             <Card>
               <CardHeader>
                 <CardTitle>최근 개정 (Recent Changes)</CardTitle>
-                <CardDescription>최근 1년 이내 개정된 법령</CardDescription>
+                <CardDescription>최근 3년 이내 개정된 법령</CardDescription>
               </CardHeader>
               <CardContent>
                 {filteredChangeLogs.current && filteredChangeLogs.current.length > 0 ? (
@@ -202,7 +246,7 @@ export default function Home() {
                   </div>
                 ) : (
                   <p className="text-gray-500 text-center py-8">
-                    {searchQuery ? '검색 결과가 없습니다.' : '최근 1년 이내 개정 사항이 없습니다.'}
+                    {searchQuery ? '검색 결과가 없습니다.' : '최근 3년 이내 개정 사항이 없습니다.'}
                   </p>
                 )}
               </CardContent>
@@ -224,7 +268,7 @@ export default function Home() {
 
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium text-gray-600">최근 개정 (1년 이내)</CardTitle>
+                  <CardTitle className="text-sm font-medium text-gray-600">최근 개정 (3년 이내)</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <p className="text-3xl font-bold text-cyan-600">{filteredChangeLogs.current.length}</p>
@@ -240,6 +284,49 @@ export default function Home() {
                 </CardContent>
               </Card>
             </div>
+
+            {/* 모니터링 대상 목록 (접을 수 있는 섹션) */}
+            <Card>
+              <CardHeader>
+                <button
+                  onClick={() => setShowMonitoredItems(!showMonitoredItems)}
+                  className="w-full flex items-center justify-between hover:bg-gray-50 p-2 rounded transition-colors"
+                >
+                  <div className="flex items-center gap-2">
+                    <CardTitle className="text-base">모니터링 대상 목록</CardTitle>
+                    <Badge variant="outline">{monitoredItems?.length || 0}개</Badge>
+                  </div>
+                  {showMonitoredItems ? (
+                    <ChevronUp className="w-5 h-5 text-gray-600" />
+                  ) : (
+                    <ChevronDown className="w-5 h-5 text-gray-600" />
+                  )}
+                </button>
+              </CardHeader>
+              {showMonitoredItems && (
+                <CardContent>
+                  {monitoredItems && monitoredItems.length > 0 ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {monitoredItems.map((item: any) => (
+                        <div key={item.id} className="p-3 border border-gray-200 rounded-lg bg-gray-50 hover:bg-cyan-50 transition-colors">
+                          <p className="font-medium text-gray-900">{item.name}</p>
+                          <div className="flex items-center gap-2 mt-2">
+                            <Badge variant="secondary" className="text-xs">
+                              {item.type === 'law' ? '법령' : '규칙'}
+                            </Badge>
+                            {item.externalId && (
+                              <span className="text-xs text-gray-500">MST: {item.externalId}</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-gray-500 text-center py-4">모니터링 대상이 없습니다.</p>
+                  )}
+                </CardContent>
+              )}
+            </Card>
 
             {/* 로딩 상태 */}
             {isLoading && (
@@ -265,7 +352,7 @@ export default function Home() {
                             <div className="flex-1">
                               <p className="font-semibold text-gray-900">{log.announcementNo}</p>
                               <p className="text-sm text-gray-600 mt-1">
-                                규칙명: {log.lawName || '미지정'}
+                                법령명: {log.lawName || '미지정'}
                               </p>
                               <p className="text-sm text-gray-600">
                                 시행일: {new Date(log.effectiveDate).toLocaleDateString('ko-KR')}
@@ -285,19 +372,19 @@ export default function Home() {
             <Card>
               <CardHeader>
                 <CardTitle>최근 개정 (Recent Changes)</CardTitle>
-                <CardDescription>최근 1년 이내 개정된 행정규칙</CardDescription>
+                <CardDescription>최근 3년 이내 개정된 행정규칙</CardDescription>
               </CardHeader>
               <CardContent>
                 {filteredChangeLogs.current && filteredChangeLogs.current.length > 0 ? (
                   <div className="space-y-3">
                     {filteredChangeLogs.current.slice(0, 20).map((log: any) => (
                       <Link key={log.id} href={`/detail/${log.id}`}>
-                        <div className="p-4 border border-gray-200 rounded-lg hover:bg-purple-50 cursor-pointer transition-colors">
+                        <div className="p-4 border border-gray-200 rounded-lg hover:bg-cyan-50 cursor-pointer transition-colors">
                           <div className="flex items-start justify-between">
                             <div className="flex-1">
                               <p className="font-semibold text-gray-900">{log.announcementNo}</p>
                               <p className="text-sm text-gray-600 mt-1">
-                                규칙명: {log.lawName || '미지정'}
+                                법령명: {log.lawName || '미지정'}
                               </p>
                               <p className="text-sm text-gray-600">
                                 시행일: {new Date(log.effectiveDate).toLocaleDateString('ko-KR')}
@@ -311,52 +398,13 @@ export default function Home() {
                   </div>
                 ) : (
                   <p className="text-gray-500 text-center py-8">
-                    {searchQuery ? '검색 결과가 없습니다.' : '최근 1년 이내 개정 사항이 없습니다.'}
+                    {searchQuery ? '검색 결과가 없습니다.' : '최근 3년 이내 개정 사항이 없습니다.'}
                   </p>
                 )}
               </CardContent>
             </Card>
           </TabsContent>
         </Tabs>
-
-        {/* 정보 섹션 */}
-        <div className="mt-16 grid grid-cols-1 md:grid-cols-3 gap-8">
-          <Card className="border-0 shadow-lg">
-            <CardHeader>
-              <FileText className="w-8 h-8 text-purple-600 mb-2" />
-              <CardTitle>법령 모니터링</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-gray-600">
-                법령 변경이력 API를 통해 최근 1년 및 미래 시행 예정 건을 자동 감지
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card className="border-0 shadow-lg">
-            <CardHeader>
-              <AlertCircle className="w-8 h-8 text-cyan-600 mb-2" />
-              <CardTitle>행정규칙 모니터링</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-gray-600">
-                행정규칙 목록 조회 API로 신규 및 미래 시행 데이터를 자동 판별
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card className="border-0 shadow-lg">
-            <CardHeader>
-              <CheckCircle2 className="w-8 h-8 text-purple-600 mb-2" />
-              <CardTitle>신구법 비교</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-gray-600">
-                구법과 신법을 2컬럼 레이아웃으로 직관적으로 비교 분석
-              </p>
-            </CardContent>
-          </Card>
-        </div>
       </div>
     </div>
   );

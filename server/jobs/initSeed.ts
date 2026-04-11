@@ -32,10 +32,18 @@ interface LawRecord {
 
 /**
  * 법령구분명에서 type 결정
+ * 
+ * 법령(Statutes): 법률, 대통령령, 시행령, 부령, 시행규칙 등
+ * 행정규칙(Administrative Rules): 고시, 규정, 지침 등
  */
 function determineType(lawClassification: string): 'law' | 'rule' {
-  const lawTypes = ['법률', '대통령령', '부령'];
-  return lawTypes.includes(lawClassification) ? 'law' : 'rule';
+  // 행정규칙: 고시만 rule로 분류
+  if (lawClassification === '고시') {
+    return 'rule';
+  }
+  
+  // 나머지는 모두 법령으로 분류 (법률, 대통령령, 부령, 시행규칙 등)
+  return 'law';
 }
 
 /**

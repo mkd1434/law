@@ -22,18 +22,34 @@ export default function Home() {
   const [activeSection, setActiveSection] = useState<ActiveSection>(null);
 
   // 모니터링 대상 조회 (로그인 불필요 - 항상 활성화)
-  const { data: monitoredItems, isLoading: itemsLoading } = trpc.monitoring.getMonitoredItems.useQuery(
+  // 에러 무시하고 빈 배열 반환 (Graceful Degradation)
+  const { data: monitoredItems = [], isLoading: itemsLoading, error: itemsError } = trpc.monitoring.getMonitoredItems.useQuery(
     { type: selectedTab },
-    { enabled: true } // 항상 활성화
+    { 
+      enabled: true, // 항상 활성화
+      retry: false, // 재시도 안 함
+    }
   );
 
   // 변경 로그 조회 (로그인 불필요 - 항상 활성화)
-  const { data: allChangeLogs, isLoading: logsLoading } = trpc.monitoring.getChangeLogs.useQuery(
+  // 에러 무시하고 빈 배열 반환 (Graceful Degradation)
+  const { data: allChangeLogs = [], isLoading: logsLoading, error: logsError } = trpc.monitoring.getChangeLogs.useQuery(
     { limit: 1000 },
-    { enabled: true } // 항상 활성화
+    { 
+      enabled: true, // 항상 활성화
+      retry: false, // 재시도 안 함
+    }
   );
 
   const isLoading = itemsLoading || logsLoading;
+
+  // 에러 로깅 (디버깅용)
+  if (itemsError) {
+    console.warn('[Home] Items error (무시됨):', itemsError);
+  }
+  if (logsError) {
+    console.warn('[Home] Logs error (무시됨):', logsError);
+  }
 
   /**
    * 최근 3년 조건 필터링 및 타입별 분류

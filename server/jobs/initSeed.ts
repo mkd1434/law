@@ -31,18 +31,23 @@ interface LawRecord {
 }
 
 /**
- * 법령구분명에서 type 결정
+ * 법령명에 기반한 type 결정
  * 
- * 법령(Statutes): 법률, 대통령령, 시행령, 부령, 시행규칙 등
- * 행정규칙(Administrative Rules): 고시, 규정, 지침 등
+ * 법령(Statutes): 시행규칙이 포함되면 law
+ * 행정규칙(Administrative Rules): 고시가 포함되면 rule
  */
-function determineType(lawClassification: string): 'law' | 'rule' {
-  // 행정규칙: 고시만 rule로 분류
-  if (lawClassification === '고시') {
+function determineType(lawName: string): 'law' | 'rule' {
+  // 시행규칙은 법령으로 분류
+  if (lawName.includes('시행규칙')) {
+    return 'law';
+  }
+  
+  // 고시는 행정규칙으로 분류
+  if (lawName.includes('고시')) {
     return 'rule';
   }
   
-  // 나머지는 모두 법령으로 분류 (법률, 대통령령, 부령, 시행규칙 등)
+  // 기본값: 법률, 대통령령, 부령 등은 모두 law
   return 'law';
 }
 
@@ -123,6 +128,11 @@ export async function initializeSeedData(): Promise<void> {
       return;
     }
 
+    // DB 강제 리셋: 기존 데이터 전부 삭제
+    console.log('[InitSeed] 🔄 기존 모니터링 데이터 삭제 중...');
+    await db.delete(monitoredItems);
+    console.log('[InitSeed] ✅ 기존 데이터 삭제 완료');
+
     // 기존 데이터 확인
     const existing = await db.select().from(monitoredItems);
 
@@ -134,7 +144,7 @@ export async function initializeSeedData(): Promise<void> {
       try {
         const lawName = record.법령명.trim();
         const lawMST = record.법령MST.trim();
-        const lawType = determineType(record.법령구분명);
+        const lawType = determineType(lawName);  // lawName 기반 분류
 
         // 중복 확인
         const isDuplicate = existing.some(

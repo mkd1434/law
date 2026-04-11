@@ -137,6 +137,50 @@ class LawAPIClient {
   }
 
   /**
+   * 개별 법령의 시행법령 변경이력 조회
+   * target=efLaw를 사용하여 시행법령 포함 조회
+   * 
+   * API: http://www.law.go.kr/DRF/lawSearch.do?target=efLaw
+   * 
+   * @param mst - 법령 MST 코드
+   * @param regDt - 변경일 (YYYYMMDD 형식)
+   */
+  async getLawChangesByMST(
+    mst: string,
+    regDt: string
+  ): Promise<any> {
+    return withRetry(async () => {
+      await this.rateLimiter.wait();
+
+      const params = {
+        target: 'efLaw',  // 시행법령 포함
+        OC: OC_ID,
+        type: 'JSON',
+        MST: mst,
+        regDt: regDt,
+        display: 100,
+        page: 1,
+      };
+
+      console.log(`[LawClient] 🔍 Fetching law changes for MST: ${mst}, regDt: ${regDt}`);
+      const response = await this.client.get('/lawSearch.do', { params });
+
+      if (!response.data) {
+        console.warn(`[LawClient] ⚠️  Empty response for MST: ${mst}`);
+        return { data: [] };
+      }
+
+      if (response.data.error) {
+        console.error(`[LawClient] ❌ API Error for MST ${mst}:`, response.data.error);
+        return { data: [], error: response.data.error };
+      }
+
+      console.log(`[LawClient] ✅ Response for MST ${mst}:`, JSON.stringify(response.data).substring(0, 200));
+      return response.data;
+    });
+  }
+
+  /**
    * 신구법 본문 조회 API (법령 전용)
    * lawService.do 엔드포인트 사용
    * 

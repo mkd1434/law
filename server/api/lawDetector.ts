@@ -64,7 +64,7 @@ export async function detectAndCollectLawChanges(
 
   try {
     // Step 1: 법령 변경이력 조회
-    // 최근 1년 내의 변경이력을 조회 (최신 변경일부터 시작)
+    // 개별 법령별로 MST를 이용한 조회
     console.log(`\n[Law] 🔍 Processing: ${lawName} (MST: ${lawId})`);
 
     // 최근 3년 내의 날짜 계산 (확장된 감시 범위)
@@ -72,10 +72,25 @@ export async function detectAndCollectLawChanges(
     const threeYearsAgo = new Date(today.getFullYear() - 3, today.getMonth(), today.getDate());
     const regDt = formatDateForAPI(threeYearsAgo);
 
-    const changeHistory = await lawAPIClient.getLawChangeHistory(regDt);
+    console.log(`[Law] 📅 Date range: ${regDt} ~ ${formatDateForAPI(today)} (3 years)`);
 
-    if (!changeHistory || !changeHistory.data) {
-      console.log(`[Law] ℹ️  No change history found for ${lawName}`);
+    // 개별 법령별 API 호출 (target=efLaw 사용)
+    const changeHistory = await lawAPIClient.getLawChangesByMST(lawId, regDt);
+
+    if (!changeHistory) {
+      console.error(`[Law] ❌ No response from API for ${lawName}`);
+      errors.push(`API returned null for ${lawName}`);
+      return { detected: 0, collected: 0, errors };
+    }
+
+    if (changeHistory.error) {
+      console.error(`[Law] ❌ API Error for ${lawName}:`, changeHistory.error);
+      errors.push(`API error for ${lawName}: ${changeHistory.error}`);
+      return { detected: 0, collected: 0, errors };
+    }
+
+    if (!changeHistory.data || (Array.isArray(changeHistory.data) && changeHistory.data.length === 0)) {
+      console.log(`[Law] ℹ️  No change history found for ${lawName} (empty response)`);
       return { detected: 0, collected: 0, errors: [] };
     }
 

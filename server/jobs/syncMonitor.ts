@@ -41,7 +41,23 @@ export async function runSyncJob(): Promise<void> {
         name: item.name,
       }));
 
-    console.log(`[SyncJob] Found ${laws.length} laws and ${rules.length} rules to monitor`);
+    console.log(`[SyncJob] ✅ Found ${laws.length} laws and ${rules.length} rules to monitor`);
+    
+    // 법령 목록 출력
+    if (laws.length > 0) {
+      console.log('[SyncJob] 📋 Laws to process:');
+      laws.forEach((law, idx) => {
+        console.log(`  ${idx + 1}. ${law.name} (ID: ${law.lawId})`);
+      });
+    }
+    
+    // 행정규칙 목록 출력
+    if (rules.length > 0) {
+      console.log('[SyncJob] 📋 Rules to process:');
+      rules.forEach((rule, idx) => {
+        console.log(`  ${idx + 1}. ${rule.name} (ID: ${rule.ruleId})`);
+      });
+    }
 
     // Step 3: 법령 변동 감지 및 수집
     if (laws.length > 0) {

@@ -4,8 +4,8 @@
  */
 
 import { getMonitoredItems } from '../db';
-import { detectAndCollectAllLaws } from '../api/lawDetector';
-import { detectAndCollectAllRules } from '../api/ruleDetector';
+import { detectAndCollectLawChanges } from '../api/lawDetector';
+import { detectAndCollectRuleChanges } from '../api/ruleDetector';
 
 /**
  * 모니터링 동기화 작업 실행
@@ -46,20 +46,50 @@ export async function runSyncJob(): Promise<void> {
     // Step 3: 법령 변동 감지 및 수집
     if (laws.length > 0) {
       console.log('[SyncJob] Processing laws...');
-      const lawResults = await detectAndCollectAllLaws(laws);
-      console.log(`[SyncJob] Laws - Detected: ${lawResults.totalDetected}, Collected: ${lawResults.totalCollected}`);
-      if (lawResults.errors.length > 0) {
-        console.warn('[SyncJob] Law errors:', lawResults.errors);
+      let totalLawDetected = 0;
+      let totalLawCollected = 0;
+      const lawErrors: string[] = [];
+
+      for (const law of laws) {
+        try {
+          const result = await detectAndCollectLawChanges(law.itemId, law.lawId, law.name);
+          totalLawDetected += result.detected;
+          totalLawCollected += result.collected;
+          lawErrors.push(...result.errors);
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          lawErrors.push(`Error processing ${law.name}: ${errorMsg}`);
+        }
+      }
+
+      console.log(`[SyncJob] Laws - Detected: ${totalLawDetected}, Collected: ${totalLawCollected}`);
+      if (lawErrors.length > 0) {
+        console.warn('[SyncJob] Law errors:', lawErrors);
       }
     }
 
     // Step 4: 행정규칙 변동 감지 및 수집
     if (rules.length > 0) {
       console.log('[SyncJob] Processing rules...');
-      const ruleResults = await detectAndCollectAllRules(rules);
-      console.log(`[SyncJob] Rules - Detected: ${ruleResults.totalDetected}, Collected: ${ruleResults.totalCollected}`);
-      if (ruleResults.errors.length > 0) {
-        console.warn('[SyncJob] Rule errors:', ruleResults.errors);
+      let totalRuleDetected = 0;
+      let totalRuleCollected = 0;
+      const ruleErrors: string[] = [];
+
+      for (const rule of rules) {
+        try {
+          const result = await detectAndCollectRuleChanges(rule.itemId, rule.ruleId, rule.name);
+          totalRuleDetected += result.detected;
+          totalRuleCollected += result.collected;
+          ruleErrors.push(...result.errors);
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          ruleErrors.push(`Error processing ${rule.name}: ${errorMsg}`);
+        }
+      }
+
+      console.log(`[SyncJob] Rules - Detected: ${totalRuleDetected}, Collected: ${totalRuleCollected}`);
+      if (ruleErrors.length > 0) {
+        console.warn('[SyncJob] Rule errors:', ruleErrors);
       }
     }
 

@@ -20,18 +20,19 @@ export async function detectAndCollectRuleChanges(
   ruleName: string,
   lastKnownDate?: Date
 ): Promise<{ detected: number; collected: number; errors: string[] }> {
+  console.log(`\n[Rule] 🔍 Processing: ${ruleName} (ID: ${ruleId})`);
   const errors: string[] = [];
   let detectedCount = 0;
   let collectedCount = 0;
 
   try {
     // Step 1: 행정규칙 목록 조회 (전체 리스트)
-    console.log(`[Rule] Fetching rule list for ${ruleName} (ID: ${ruleId})`);
-    const ruleList = await lawAPIClient.getAdminRuleList({ display: 100 });
+    console.log(`[Rule] 📋 Fetching rule list for ${ruleName}`);
+    const ruleList = await lawAPIClient.getAdminRuleList(undefined, { display: 100 });
 
     if (!ruleList || !ruleList.data) {
-      errors.push(`No rule list found for ${ruleName}`);
-      return { detected: 0, collected: 0, errors };
+      console.log(`[Rule] ℹ️  No rule list found for ${ruleName}`);
+      return { detected: 0, collected: 0, errors: [] };
     }
 
     // Step 2: 해당 규칙 ID의 항목 필터링

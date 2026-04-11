@@ -153,7 +153,7 @@ class LawAPIClient {
       await this.rateLimiter.wait();
 
       const params = {
-        target: 'efLaw',  // 시행법령 포함
+        target: 'law',  // 'efLaw' 대신 'law' 사용
         OC: OC_ID,
         type: 'JSON',
         MST: mst,
@@ -161,6 +161,12 @@ class LawAPIClient {
         display: 100,
         page: 1,
       };
+
+      // 전체 요청 URL 출력 (인증키 포함)
+      const fullUrl = `${LAW_API_BASE_URL}/lawSearch.do?${Object.entries(params)
+        .map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`)
+        .join('&')}`;
+      console.log(`[LawClient] 📡 Full Request URL:\n${fullUrl}\n`);
 
       console.log(`[LawClient] 🔍 Fetching law changes for MST: ${mst}, regDt: ${regDt}`);
       const response = await this.client.get('/lawSearch.do', { params });
@@ -248,8 +254,11 @@ class LawAPIClient {
         page: options?.page || 1,
       };
 
+      // 날짜 필수 (date: all 대신 정확한 시작일자 사용)
       if (date) {
         params.date = date;
+      } else {
+        params.date = '20230411';  // 기본값: 3년 전
       }
       if (options?.org) {
         params.org = options.org;

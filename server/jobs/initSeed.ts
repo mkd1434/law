@@ -79,9 +79,12 @@ function parseCSV(filePath: string): LawRecord[] {
         record[header] = values[index] || '';
       });
 
-      if (record.법령명 && record.법령MST) {
-        records.push(record as LawRecord);
+      // 빈 이름 필터링 (이름이 없으면 스킵)
+      if (!record['법령명'] || !record['법령명'].trim()) {
+        continue;
       }
+
+      records.push(record as LawRecord);
     }
 
     return records;

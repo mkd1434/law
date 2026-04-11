@@ -67,10 +67,10 @@ export async function detectAndCollectLawChanges(
     // 최근 1년 내의 변경이력을 조회 (최신 변경일부터 시작)
     console.log(`\n[Law] 🔍 Processing: ${lawName} (MST: ${lawId})`);
 
-    // 최근 1년 내의 날짜 계산
+    // 최근 3년 내의 날짜 계산 (확장된 감시 범위)
     const today = new Date();
-    const oneYearAgo = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate());
-    const regDt = formatDateForAPI(oneYearAgo);
+    const threeYearsAgo = new Date(today.getFullYear() - 3, today.getMonth(), today.getDate());
+    const regDt = formatDateForAPI(threeYearsAgo);
 
     const changeHistory = await lawAPIClient.getLawChangeHistory(regDt);
 

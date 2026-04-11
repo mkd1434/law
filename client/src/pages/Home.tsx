@@ -43,20 +43,20 @@ export default function Home() {
     if (!allChangeLogs || !monitoredItems) return { current: [], upcoming: [] };
 
     const now = new Date();
-    const oneYearAgo = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+    const threeYearsAgo = new Date(now.getTime() - 3 * 365 * 24 * 60 * 60 * 1000); // 3년 날짜
 
     // 모니터링 대상 ID 목록 (선택된 타입)
     const monitoredItemIds = new Set(monitoredItems.map((item: any) => item.id));
 
-    // 필터링: 1년 이내 + 선택된 타입 + 검색어
+    // 필터링: 3년 이내 + 선택된 타입 + 검색어
     const filtered = allChangeLogs.filter((log: any) => {
       const effectiveDate = new Date(log.effectiveDate);
-      const isWithinOneYear = effectiveDate >= oneYearAgo;
+      const isWithinThreeYears = effectiveDate >= threeYearsAgo;
       const isMonitored = monitoredItemIds.has(log.itemId);
       const matchesSearch = !searchQuery || 
         log.announcementNo?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         log.lawName?.toLowerCase().includes(searchQuery.toLowerCase());
-      return isWithinOneYear && isMonitored && matchesSearch;
+      return isWithinThreeYears && isMonitored && matchesSearch;
     });
 
     // 상태별 분류
@@ -74,7 +74,7 @@ export default function Home() {
           <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-cyan-600 bg-clip-text text-transparent">
             법령 및 행정규칙 모니터링
           </h1>
-          <p className="text-gray-600 mt-2">최근 1년 이내 변경 사항 및 시행 예정 목록</p>
+          <p className="text-gray-600 mt-2">최근 3년 이내 변경 사항 및 시행 예정 목록</p>
         </div>
       </div>
 

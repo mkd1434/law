@@ -7,6 +7,7 @@ import { registerOAuthRoutes } from "./oauth";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
+import { initializeSeedData } from "../jobs/initSeed";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -28,6 +29,9 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 }
 
 async function startServer() {
+  // 초기 Seed 데이터 로드 (비동기, 에러는 무시)
+  await initializeSeedData();
+
   const app = express();
   const server = createServer(app);
   // Configure body parser with larger size limit for file uploads

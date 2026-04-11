@@ -65,6 +65,7 @@ export function useAuth(options?: UseAuthOptions) {
     if (meQuery.isLoading || logoutMutation.isPending) return;
     if (state.user) return;
     if (typeof window === "undefined") return;
+    if (!redirectPath) return; // redirectPath가 null이면 리다이렉트하지 않음
     if (window.location.pathname === redirectPath) return;
 
     window.location.href = redirectPath

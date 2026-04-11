@@ -2,24 +2,24 @@ export { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 
 /**
  * 로그인 URL 생성 함수
- * 런타임에 환경 변수를 읽어서 리다이렉트 URI를 현재 origin에 맞게 생성
- * 환경 변수가 없는 경우 안전한 기본값 사용
+ * 환경 변수가 없는 경우 null을 반환하여 로그인 기능을 비활성화
+ * (Graceful Degradation: 환경 변수 부재로 인한 크래시 방지)
  */
-export const getLoginUrl = (returnPath?: string) => {
+export const getLoginUrl = (returnPath?: string): string | null => {
   try {
-    // 환경 변수 읽기 (기본값 제공)
-    const oauthPortalUrl = import.meta.env.VITE_OAUTH_PORTAL_URL || 'https://auth.manus.im';
+    // 환경 변수 읽기 (기본값 없음 - null 반환으로 처리)
     const appId = import.meta.env.VITE_APP_ID;
+    const oauthPortalUrl = import.meta.env.VITE_OAUTH_PORTAL_URL;
 
-    // 환경 변수 검증
+    // 환경 변수 검증: 하나라도 없으면 null 반환 (로그인 기능 비활성화)
     if (!appId) {
-      console.error('[getLoginUrl] VITE_APP_ID is not set. Check .env file.');
-      throw new Error('VITE_APP_ID is required');
+      console.warn('[getLoginUrl] VITE_APP_ID is not configured. Login feature disabled.');
+      return null;
     }
 
     if (!oauthPortalUrl) {
-      console.error('[getLoginUrl] VITE_OAUTH_PORTAL_URL is not set. Check .env file.');
-      throw new Error('VITE_OAUTH_PORTAL_URL is required');
+      console.warn('[getLoginUrl] VITE_OAUTH_PORTAL_URL is not configured. Login feature disabled.');
+      return null;
     }
 
     // 리다이렉트 URI 생성
@@ -36,11 +36,11 @@ export const getLoginUrl = (returnPath?: string) => {
     url.searchParams.set("state", state);
     url.searchParams.set("type", "signIn");
 
-    console.log('[getLoginUrl] Generated login URL:', url.toString());
+    console.log('[getLoginUrl] Generated login URL successfully');
     return url.toString();
   } catch (error) {
-    console.error('[getLoginUrl] Error generating login URL:', error);
-    // 폴백: 현재 페이지로 돌아가기
-    return window.location.href;
+    console.warn('[getLoginUrl] Error generating login URL:', error);
+    // 폴백: null 반환 (로그인 버튼 미렌더링)
+    return null;
   }
 };

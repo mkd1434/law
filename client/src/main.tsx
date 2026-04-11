@@ -18,7 +18,14 @@ const redirectToLoginIfUnauthorized = (error: unknown) => {
 
   if (!isUnauthorized) return;
 
-  window.location.href = getLoginUrl();
+  // 로그인 URL이 없으면 (환경 변수 미설정) 리다이렉트하지 않음
+  const loginUrl = getLoginUrl();
+  if (!loginUrl) {
+    console.warn('[main] Login URL not available. Skipping redirect.');
+    return;
+  }
+
+  window.location.href = loginUrl;
 };
 
 queryClient.getQueryCache().subscribe(event => {

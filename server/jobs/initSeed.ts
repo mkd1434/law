@@ -128,13 +128,10 @@ export async function initializeSeedData(): Promise<void> {
       return;
     }
 
-    // DB 강제 리셋: 기존 데이터 전부 삭제
-    console.log('[InitSeed] 🔄 기존 모니터링 데이터 삭제 중...');
-    await db.delete(monitoredItems);
-    console.log('[InitSeed] ✅ 기존 데이터 삭제 완료');
-
-    // 기존 데이터 확인
+    // 기존 데이터 확인 (데이터 보존)
+    console.log('[InitSeed] 📋 기존 데이터 확인 중...');
     const existing = await db.select().from(monitoredItems);
+    console.log(`[InitSeed] 📊 현재 DB에 ${existing.length}개의 모니터링 대상이 있습니다`);
 
     // 새로운 데이터 삽입 (중복 제거)
     let insertedCount = 0;
@@ -171,8 +168,12 @@ export async function initializeSeedData(): Promise<void> {
       }
     }
 
-    if (insertedCount > 0 || skippedCount > 0) {
-      console.log(`[InitSeed] ✅ Seed 데이터 로드 완료 (신규: ${insertedCount}개, 기존: ${skippedCount}개)`);
+    if (insertedCount > 0) {
+      console.log(`[InitSeed] ✅ Seed 데이터 로드 완료 (신규: ${insertedCount}개 추가)`);
+    } else if (skippedCount > 0) {
+      console.log(`[InitSeed] ℹ️  모든 데이터가 이미 존재합니다 (중복: ${skippedCount}개)`);
+    } else {
+      console.log('[InitSeed] ℹ️  추가할 새로운 데이터가 없습니다');
     }
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);

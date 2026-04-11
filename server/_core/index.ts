@@ -8,6 +8,7 @@ import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { initializeSeedData } from "../jobs/initSeed";
+import { runSyncJob } from "../jobs/syncMonitor";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -31,6 +32,12 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 async function startServer() {
   // 초기 Seed 데이터 로드 (비동기, 에러는 무시)
   await initializeSeedData();
+
+  // 서버 시작 시 동기화 작업 강제 실행 (비동기, 에러 발생해도 서버는 정상 시작)
+  console.log('[Server] 🚀 Starting monitoring sync job...');
+  runSyncJob().catch(error => {
+    console.error('[Server] ⚠️  Sync job error (서버는 정상 시작):', error);
+  });
 
   const app = express();
   const server = createServer(app);
@@ -62,8 +69,11 @@ async function startServer() {
   }
 
   server.listen(port, () => {
-    console.log(`Server running on http://localhost:${port}/`);
+    console.log(`\n✅ Server running on http://localhost:${port}/\n`);
   });
 }
 
-startServer().catch(console.error);
+startServer().catch(error => {
+  console.error('[Server] ❌ Fatal error:', error);
+  process.exit(1);
+});

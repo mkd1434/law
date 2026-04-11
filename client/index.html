@@ -17,10 +17,29 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
-    <script
-      defer
-      src="%VITE_ANALYTICS_ENDPOINT%/umami"
-      data-website-id="%VITE_ANALYTICS_WEBSITE_ID%"></script>
+    <!-- 
+      분석 도구 스크립트 (Umami)
+      환경 변수가 설정되어 있을 때만 로드됨
+      Vite의 define을 통해 __VITE_ANALYTICS_ENDPOINT__와 __VITE_ANALYTICS_WEBSITE_ID__로 치환됨
+    -->
+    <script>
+      (function() {
+        const endpoint = '__VITE_ANALYTICS_ENDPOINT__';
+        const websiteId = '__VITE_ANALYTICS_WEBSITE_ID__';
+        
+        // 환경 변수가 설정되어 있고 유효한 경우에만 분석 스크립트 로드
+        if (endpoint && endpoint !== '__VITE_ANALYTICS_ENDPOINT__' && websiteId && websiteId !== '__VITE_ANALYTICS_WEBSITE_ID__') {
+          const script = document.createElement('script');
+          script.defer = true;
+          script.src = endpoint + '/umami';
+          script.setAttribute('data-website-id', websiteId);
+          document.body.appendChild(script);
+          console.log('[Analytics] Loaded from:', endpoint);
+        } else {
+          console.log('[Analytics] Skipped: VITE_ANALYTICS_ENDPOINT or VITE_ANALYTICS_WEBSITE_ID not configured');
+        }
+      })();
+    </script>
   </body>
 
 </html>

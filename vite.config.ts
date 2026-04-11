@@ -1,4 +1,3 @@
-import { jsxLocPlugin } from "@builder.io/vite-plugin-jsx-loc";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import fs from "node:fs";
@@ -52,108 +51,150 @@ function trimLogFile(logPath: string, maxSize: number) {
     }
 
     fs.writeFileSync(logPath, keptLines.join("\n"), "utf-8");
-  } catch {
-    /* ignore trim errors */
+  } catch (error) {
+    console.error(`Failed to trim log file ${logPath}:`, error);
   }
 }
 
-function writeToLogFile(source: LogSource, entries: unknown[]) {
-  if (entries.length === 0) return;
-
-  ensureLogDir();
-  const logPath = path.join(LOG_DIR, `${source}.log`);
-
-  // Format entries with timestamps
-  const lines = entries.map((entry) => {
-    const ts = new Date().toISOString();
-    return `[${ts}] ${JSON.stringify(entry)}`;
-  });
-
-  // Append to log file
-  fs.appendFileSync(logPath, `${lines.join("\n")}\n`, "utf-8");
-
-  // Trim if exceeds max size
-  trimLogFile(logPath, MAX_LOG_SIZE_BYTES);
+function writeLog(logPath: string, message: string) {
+  try {
+    ensureLogDir();
+    fs.appendFileSync(logPath, `${message}\n`, "utf-8");
+    trimLogFile(logPath, MAX_LOG_SIZE_BYTES);
+  } catch (error) {
+    console.error(`Failed to write to log file ${logPath}:`, error);
+  }
 }
 
-/**
- * Vite plugin to collect browser debug logs
- * - POST /__manus__/logs: Browser sends logs, written directly to files
- * - Files: browserConsole.log, networkRequests.log, sessionReplay.log
- * - Auto-trimmed when exceeding 1MB (keeps newest entries)
- */
+// =============================================================================
+// Vite Plugin: Manus Debug Collector
+// Injects a client-side script that collects browser logs and sends them to the server
+// =============================================================================
+
+function jsxLocPlugin(): Plugin {
+  return {
+    name: "jsx-loc",
+    transform(code, id) {
+      if (!id.includes("node_modules") && (id.endsWith(".jsx") || id.endsWith(".tsx"))) {
+        return code;
+      }
+      return null;
+    },
+  };
+}
+
 function vitePluginManusDebugCollector(): Plugin {
   return {
-    name: "manus-debug-collector",
+    name: "vite-plugin-manus-debug-collector",
+    transformIndexHtml: {
+      order: "pre",
+      handler(html) {
+        const debugScript = `
+          <script>
+            (function() {
+              const logs = {
+                browserConsole: [],
+                networkRequests: [],
+                sessionReplay: [],
+              };
 
-    transformIndexHtml(html) {
-      if (NODE_ENV === "production") {
-        return html;
-      }
-      return {
-        html,
-        tags: [
-          {
-            tag: "script",
-            attrs: {
-              src: "/__manus__/debug-collector.js",
-              defer: true,
-            },
-            injectTo: "head",
-          },
-        ],
-      };
-    },
+              // Intercept console methods
+              const originalLog = console.log;
+              const originalWarn = console.warn;
+              const originalError = console.error;
 
-    configureServer(server: ViteDevServer) {
-      // POST /__manus__/logs: Browser sends logs (written directly to files)
-      server.middlewares.use("/__manus__/logs", (req, res, next) => {
-        if (req.method !== "POST") {
-          return next();
-        }
+              function addLog(level, args) {
+                const timestamp = new Date().toISOString();
+                const message = args.map(arg => {
+                  if (typeof arg === 'object') {
+                    try {
+                      return JSON.stringify(arg);
+                    } catch {
+                      return String(arg);
+                    }
+                  }
+                  return String(arg);
+                }).join(' ');
 
-        const handlePayload = (payload: any) => {
-          // Write logs directly to files
-          if (payload.consoleLogs?.length > 0) {
-            writeToLogFile("browserConsole", payload.consoleLogs);
-          }
-          if (payload.networkRequests?.length > 0) {
-            writeToLogFile("networkRequests", payload.networkRequests);
-          }
-          if (payload.sessionEvents?.length > 0) {
-            writeToLogFile("sessionReplay", payload.sessionEvents);
-          }
+                logs.browserConsole.push({
+                  timestamp,
+                  level,
+                  message,
+                  stack: new Error().stack,
+                });
+              }
 
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ success: true }));
-        };
+              console.log = function(...args) {
+                addLog('log', args);
+                originalLog.apply(console, args);
+              };
 
-        const reqBody = (req as { body?: unknown }).body;
-        if (reqBody && typeof reqBody === "object") {
-          try {
-            handlePayload(reqBody);
-          } catch (e) {
-            res.writeHead(400, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ success: false, error: String(e) }));
-          }
-          return;
-        }
+              console.warn = function(...args) {
+                addLog('warn', args);
+                originalWarn.apply(console, args);
+              };
 
-        let body = "";
-        req.on("data", (chunk) => {
-          body += chunk.toString();
-        });
+              console.error = function(...args) {
+                addLog('error', args);
+                originalError.apply(console, args);
+              };
 
-        req.on("end", () => {
-          try {
-            const payload = JSON.parse(body);
-            handlePayload(payload);
-          } catch (e) {
-            res.writeHead(400, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ success: false, error: String(e) }));
-          }
-        });
-      });
+              // Intercept fetch/XHR
+              const originalFetch = window.fetch;
+              window.fetch = function(...args) {
+                const timestamp = new Date().toISOString();
+                const startTime = performance.now();
+                const url = args[0];
+
+                return originalFetch.apply(window, args)
+                  .then(response => {
+                    const duration = performance.now() - startTime;
+                    logs.networkRequests.push({
+                      timestamp,
+                      url: String(url),
+                      status: response.status,
+                      duration: Math.round(duration),
+                    });
+                    return response;
+                  })
+                  .catch(error => {
+                    const duration = performance.now() - startTime;
+                    logs.networkRequests.push({
+                      timestamp,
+                      url: String(url),
+                      status: 0,
+                      error: String(error),
+                      duration: Math.round(duration),
+                    });
+                    throw error;
+                  });
+              };
+
+              // Track user interactions
+              document.addEventListener('click', (e) => {
+                logs.sessionReplay.push({
+                  timestamp: new Date().toISOString(),
+                  type: 'click',
+                  target: e.target?.tagName || 'unknown',
+                  className: e.target?.className || '',
+                });
+              }, true);
+
+              // Periodically send logs to server
+              setInterval(() => {
+                if (logs.browserConsole.length > 0 || logs.networkRequests.length > 0) {
+                  navigator.sendBeacon('/api/debug-logs', JSON.stringify(logs));
+                  logs.browserConsole = [];
+                  logs.networkRequests = [];
+                  logs.sessionReplay = [];
+                }
+              }, 5000);
+            })();
+          </script>
+        `;
+
+        return html.replace("<head>", `<head>${debugScript}`);
+      },
     },
   };
 }
@@ -162,6 +203,22 @@ const plugins = [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime(
 
 export default defineConfig({
   plugins,
+  // ============================================================================
+  // 환경 변수 설정
+  // ============================================================================
+  // envPrefix: VITE_로 시작하는 환경 변수만 클라이언트에 노출
+  // 기본값이 VITE_이므로 명시적으로 설정하여 명확성 확보
+  envPrefix: 'VITE_',
+  
+  // define: HTML 템플릿에서 %VITE_*% 형식으로 사용할 환경 변수 정의
+  // Vite가 빌드 시 이 값들을 치환함
+  define: {
+    __VITE_ANALYTICS_ENDPOINT__: JSON.stringify(process.env.VITE_ANALYTICS_ENDPOINT || ''),
+    __VITE_ANALYTICS_WEBSITE_ID__: JSON.stringify(process.env.VITE_ANALYTICS_WEBSITE_ID || ''),
+    __VITE_APP_ID__: JSON.stringify(process.env.VITE_APP_ID || ''),
+    __VITE_OAUTH_PORTAL_URL__: JSON.stringify(process.env.VITE_OAUTH_PORTAL_URL || 'https://auth.manus.im'),
+  },
+
   resolve: {
     alias: {
       "@": path.resolve(CLIENT_DIR || '.', "src"),
@@ -199,4 +256,7 @@ if (NODE_ENV === 'development') {
   console.log('[Vite Config] PROJECT_ROOT:', PROJECT_ROOT);
   console.log('[Vite Config] CLIENT_DIR:', CLIENT_DIR);
   console.log('[Vite Config] DIST_DIR:', DIST_DIR);
+  console.log('[Vite Config] VITE_APP_ID:', process.env.VITE_APP_ID ? '***' : 'NOT SET');
+  console.log('[Vite Config] VITE_OAUTH_PORTAL_URL:', process.env.VITE_OAUTH_PORTAL_URL || 'NOT SET');
+  console.log('[Vite Config] VITE_ANALYTICS_ENDPOINT:', process.env.VITE_ANALYTICS_ENDPOINT || 'NOT SET');
 }

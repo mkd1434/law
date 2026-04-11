@@ -11,8 +11,12 @@ import { vitePluginManusRuntime } from "vite-plugin-manus-runtime";
 // Writes browser logs directly to files, trimmed when exceeding size limit
 // =============================================================================
 
-const PROJECT_ROOT = import.meta.dirname;
+// 프로젝트 루트 경로 (절대 경로)
+const PROJECT_ROOT = import.meta.dirname || process.cwd();
 const LOG_DIR = path.join(PROJECT_ROOT, ".manus-logs");
+
+// 환경 변수 기본값 설정
+const NODE_ENV = process.env.NODE_ENV || 'development';
 const MAX_LOG_SIZE_BYTES = 1 * 1024 * 1024; // 1MB per log file
 const TRIM_TARGET_BYTES = Math.floor(MAX_LOG_SIZE_BYTES * 0.6); // Trim to 60% to avoid constant re-trimming
 
@@ -79,7 +83,7 @@ function vitePluginManusDebugCollector(): Plugin {
     name: "manus-debug-collector",
 
     transformIndexHtml(html) {
-      if (process.env.NODE_ENV === "production") {
+      if (NODE_ENV === "production") {
         return html;
       }
       return {

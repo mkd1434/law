@@ -10,7 +10,7 @@
  */
 
 import fs from 'fs';
-import path from 'path';
+
 import { getDb } from '../db';
 import { monitoredItems } from '../../drizzle/schema';
 
@@ -151,7 +151,7 @@ async function seedMonitoredItems(csvFilePath: string): Promise<void> {
 }
 
 // 실행
-const csvPath = path.join(__dirname, '../../upload/법령목록.csv');
+const csvPath = '/home/ubuntu/upload/법령목록.csv';
 seedMonitoredItems(csvPath).catch((err: unknown) => {
   console.error(err);
   process.exit(1);

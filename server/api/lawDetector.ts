@@ -107,15 +107,22 @@ export async function detectAndCollectLawChanges(
           if (comparisonResponse?.efYd) {
             // 날짜 형식: YYYYMMDD -> Date 객체로 변환
             const efYdStr = String(comparisonResponse.efYd);
+            console.log(`[DB Save] efYd: ${efYdStr} (raw value from API)`);
             if (efYdStr.length === 8) {
               const year = parseInt(efYdStr.substring(0, 4));
               const month = parseInt(efYdStr.substring(4, 6));
               const day = parseInt(efYdStr.substring(6, 8));
               effectiveDate = new Date(year, month - 1, day);
               console.log(`[Law] 📅 Extracted efYd: ${efYdStr} -> ${effectiveDate.toISOString()}`);
+              console.log(`[DB Save] Parsed date: year=${year}, month=${month}, day=${day}`);
+            } else {
+              console.warn(`[DB Save] Invalid efYd format: ${efYdStr} (expected 8 digits)`);
             }
+          } else {
+            console.warn(`[DB Save] No efYd in response, using current date`);
           }
           
+          console.log(`[DB Save] Saving to DB - announcementNo: MST-${externalId}, effectiveDate: ${effectiveDate.toISOString()}`);
           await upsertChangeLog({
             itemId,
             announcementNo: `MST-${externalId}`,
@@ -125,7 +132,7 @@ export async function detectAndCollectLawChanges(
             rawData: comparisonResponse,
           });
           collected++;
-          console.log(`[Law] ✅ Saved law comparison for MST: ${externalId}`);
+          console.log(`[Law] ✅ Saved law comparison for MST: ${externalId}, effectiveDate: ${effectiveDate.toISOString()}`);
         } catch (saveError) {
           const saveErrorMsg = saveError instanceof Error ? saveError.message : String(saveError);
           console.error(`[Law] ❌ Failed to save law comparison: ${saveErrorMsg}`);

@@ -179,9 +179,10 @@ export async function upsertChangeLog(log: InsertChangeLog) {
     .limit(1);
   
   if (existing.length > 0) {
-    // 기존 데이터 업데이트
+    // 기존 데이터 업데이트 (efYd 포함)
     console.log(`[DB] 📝 Updating existing change log: ${log.announcementNo}`);
-    return db.update(changeLogs)
+    console.log(`[DB] 📝 Update effectiveDate: ${existing[0].effectiveDate} -> ${log.effectiveDate?.toISOString()}`);
+    const result = await db.update(changeLogs)
       .set({
         effectiveDate: log.effectiveDate,
         status: log.status,
@@ -189,10 +190,15 @@ export async function upsertChangeLog(log: InsertChangeLog) {
         rawData: log.rawData,
       })
       .where(eq(changeLogs.announcementNo, log.announcementNo));
+    console.log(`[DB] ✅ Updated: ${log.announcementNo}`);
+    return result;
   } else {
     // 새로운 데이터 추가
     console.log(`[DB] ✨ Adding new change log: ${log.announcementNo}`);
-    return db.insert(changeLogs).values(log);
+    console.log(`[DB] ✨ effectiveDate: ${log.effectiveDate?.toISOString()}`);
+    const result = await db.insert(changeLogs).values(log);
+    console.log(`[DB] ✅ Added: ${log.announcementNo}`);
+    return result;
   }
 }
 

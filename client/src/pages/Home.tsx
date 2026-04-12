@@ -7,6 +7,16 @@ import { Loader2, FileText, AlertCircle, CheckCircle2, Search, ChevronDown, Chev
 import { trpc } from '@/lib/trpc';
 import { Link } from 'wouter';
 
+const formatDate = (date: Date | string): string => {
+  if (!date) return '미정';
+  const d = typeof date === 'string' ? new Date(date) : date;
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+
 type ActiveSection = 'monitored' | 'current' | 'upcoming' | null;
 
 /**

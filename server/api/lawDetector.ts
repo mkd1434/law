@@ -102,11 +102,24 @@ export async function detectAndCollectLawChanges(
         
         // DB에 변경 로그 저장
         try {
-          const now = new Date();
+          // API 응답에서 efYd (시행일자) 추출
+          let effectiveDate = new Date();
+          if (comparisonResponse?.efYd) {
+            // 날짜 형식: YYYYMMDD -> Date 객체로 변환
+            const efYdStr = String(comparisonResponse.efYd);
+            if (efYdStr.length === 8) {
+              const year = parseInt(efYdStr.substring(0, 4));
+              const month = parseInt(efYdStr.substring(4, 6));
+              const day = parseInt(efYdStr.substring(6, 8));
+              effectiveDate = new Date(year, month - 1, day);
+              console.log(`[Law] 📅 Extracted efYd: ${efYdStr} -> ${effectiveDate.toISOString()}`);
+            }
+          }
+          
           await addChangeLog({
             itemId,
             announcementNo: `MST-${externalId}`,
-            effectiveDate: now,
+            effectiveDate,
             status: 'current',
             comparisonData: comparisonResponse,
             rawData: comparisonResponse,

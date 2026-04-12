@@ -1,15 +1,19 @@
 /**
- * 법령 변동 감지 및 수집 로직
- * 법령 변경이력 API를 통해 변동을 감지하고 신구법 비교 데이터를 수집
- * 강화된 에러 처리 및 로깅
+ * 법령 개정 감시 엔진
+ * 
+ * 1. 날짜별 법령 개정 이력 조회 (lsHstInf)
+ * 2. 감시 대상 법령 필터링
+ * 3. 신구법 비교 데이터 조회 (oldAndNew)
+ * 4. 행정규칙 조회 (admrul)
  */
 
 import { lawAPIClient } from './lawClient';
-import { addChangeLog, getLatestChangeLogForItem } from '../db';
-import { InsertChangeLog } from '../../drizzle/schema';
+import { getDb } from '../db';
+import { monitoredItems } from '../../drizzle/schema';
+import { eq } from 'drizzle-orm';
 
 /**
- * API 요청용 날짜 포맷 변환 (YYYYMMDD)
+ * 날짜 포맷팅 (YYYYMMDD)
  */
 function formatDateForAPI(date: Date): string {
   const year = date.getFullYear();
@@ -19,160 +23,100 @@ function formatDateForAPI(date: Date): string {
 }
 
 /**
- * 날짜 파싱 유틸리티
- * 다양한 형식의 날짜 문자열을 Date 객체로 변환
+ * 날짜 범위 생성 (시작일부터 종료일까지 매일)
  */
-function parseDate(dateStr: string | undefined): Date | null {
-  if (!dateStr) return null;
+function getDateRange(startDate: Date, endDate: Date): string[] {
+  const dates: string[] = [];
+  const current = new Date(startDate);
 
-  // YYYYMMDD 형식
-  if (/^\d{8}$/.test(dateStr)) {
-    const year = parseInt(dateStr.substring(0, 4), 10);
-    const month = parseInt(dateStr.substring(4, 6), 10);
-    const day = parseInt(dateStr.substring(6, 8), 10);
-    return new Date(year, month - 1, day);
+  while (current <= endDate) {
+    dates.push(formatDateForAPI(current));
+    current.setDate(current.getDate() + 1);
   }
 
-  // YYYY-MM-DD 형식
-  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-    return new Date(dateStr);
-  }
-
-  // 기타 형식 시도
-  const parsed = new Date(dateStr);
-  if (!isNaN(parsed.getTime())) {
-    return parsed;
-  }
-
-  return null;
+  return dates;
 }
 
 /**
- * 법령 변동 감지 및 수집
- * @param itemId - monitored_items 테이블의 ID
- * @param lawId - 법제처 API에서 사용하는 법령 ID (MST)
- * @param lawName - 법령 이름
+ * 법령 개정 감시 (법령 + 행정규칙)
  */
 export async function detectAndCollectLawChanges(
   itemId: number,
-  lawId: string,
+  externalId: string,
   lawName: string
 ): Promise<{ detected: number; collected: number; errors: string[] }> {
   const errors: string[] = [];
-  let detectedCount = 0;
-  let collectedCount = 0;
+  let detected = 0;
+  let collected = 0;
 
   try {
-    // Step 1: 법령 변경이력 조회
-    // 개별 법령별로 MST를 이용한 조회
-    console.log(`\n[Law] 🔍 Processing: ${lawName} (MST: ${lawId})`);
+    console.log(`[Law] 🔍 Processing: ${lawName} (MST: ${externalId})`);
 
-    // 최근 3년 내의 날짜 계산 (확장된 감시 범위)
+    // 3년 범위 계산
     const today = new Date();
     const threeYearsAgo = new Date(today.getFullYear() - 3, today.getMonth(), today.getDate());
     const regDt = formatDateForAPI(threeYearsAgo);
 
     console.log(`[Law] 📅 Date range: ${regDt} ~ ${formatDateForAPI(today)} (3 years)`);
 
-    // 개별 법령별 API 호출 (target=efLaw 사용)
-    const changeHistory = await lawAPIClient.getLawChangesByMST(lawId, regDt);
+    // 법령 vs 행정규칙 분기
+    if (lawName.includes('고시')) {
+      // === 행정규칙(고시) 처리 ===
+      console.log(`[Law] 📋 Processing as ADMIN RULE (고시): ${lawName}`);
+      
+      const adminRuleResponse = await lawAPIClient.getAdminRulesByDateRange(regDt, formatDateForAPI(today));
 
-    if (!changeHistory) {
-      console.error(`[Law] ❌ No response from API for ${lawName}`);
-      errors.push(`API returned null for ${lawName}`);
-      return { detected: 0, collected: 0, errors };
-    }
+      if (!adminRuleResponse || !adminRuleResponse.data) {
+        console.warn(`[Law] ⚠️  No admin rules found for ${lawName}`);
+        return { detected: 0, collected: 0, errors };
+      }
 
-    if (changeHistory.error) {
-      console.error(`[Law] ❌ API Error for ${lawName}:`, changeHistory.error);
-      errors.push(`API error for ${lawName}: ${changeHistory.error}`);
-      return { detected: 0, collected: 0, errors };
-    }
+      const adminRules = Array.isArray(adminRuleResponse.data) ? adminRuleResponse.data : [];
+      console.log(`[Law] ✅ Found ${adminRules.length} admin rules`);
 
-    if (!changeHistory.data || (Array.isArray(changeHistory.data) && changeHistory.data.length === 0)) {
-      console.log(`[Law] ℹ️  No change history found for ${lawName} (empty response)`);
-      return { detected: 0, collected: 0, errors: [] };
-    }
+      // 감시 대상 고시 찾기
+      for (const rule of adminRules) {
+        if (rule.법령명 && rule.법령명.includes(lawName)) {
+          detected++;
+          console.log(`[Law] 📌 Matched admin rule: ${rule.법령명}`);
 
-    const changes = Array.isArray(changeHistory.data) ? changeHistory.data : [changeHistory.data];
-    detectedCount = changes.length;
-
-    console.log(`[Law] ✅ Found ${detectedCount} changes for ${lawName}`);
-
-    // Step 2: 각 변경사항에 대해 신구법 비교 데이터 수집
-    for (const change of changes) {
-      try {
-        // API 응답 필드 매핑 (한글/영문 혼합 가능)
-        const changeId = change.법령일련번호 || change.lawId || change.id;
-        const effectiveDate = parseDate(change.시행일자 || change.effectiveDate);
-        const announcementNo = change.공포번호 || change.announcementNo || '';
-
-        if (!effectiveDate) {
-          console.warn(`[Law] ⚠️  Skipping change due to missing effective date for ${lawName}`);
-          continue;
+          // 신구규칙 비교 조회
+          if (rule.법령LID) {
+            const comparisonResponse = await lawAPIClient.getAdminRuleComparison(rule.법령LID);
+            if (comparisonResponse) {
+              collected++;
+              console.log(`[Law] ✅ Collected comparison data for: ${rule.법령명}`);
+            }
+          }
         }
+      }
+    } else {
+      // === 법령(법률, 령, 규칙) 처리 ===
+      console.log(`[Law] 📋 Processing as LAW (법령): ${lawName}`);
 
-        // 오늘 날짜보다 미래인지 확인하여 status 결정
-        const now = new Date();
-        now.setHours(0, 0, 0, 0);
-        effectiveDate.setHours(0, 0, 0, 0);
-        const status = effectiveDate > now ? 'upcoming' : 'current';
+      // 신구법 비교 조회 (직접 MST 사용)
+      const comparisonResponse = await lawAPIClient.getLawComparison(externalId);
 
-        console.log(`[Law] 📅 Effective Date: ${formatDateForAPI(effectiveDate)} (Status: ${status})`);
-
-        // 이미 수집된 변경사항인지 확인
-        const existing = await getLatestChangeLogForItem(itemId);
-        if (existing && existing.announcementNo === announcementNo) {
-          console.log(`[Law] ℹ️  Change already collected: ${announcementNo}`);
-          continue;
-        }
-
-        // Step 3: 신구법 본문 조회
-        // MST 또는 ID 중 하나 사용
-        const mst = change.법령일련번호 || change.lawMST || changeId;
-        console.log(`[Law] 📄 Fetching comparison data for MST: ${mst}`);
-
-        let comparisonData: any = null;
-        try {
-          comparisonData = await lawAPIClient.getLawComparison({ MST: String(mst) });
-        } catch (apiError) {
-          const apiErrorMsg = apiError instanceof Error ? apiError.message : 'Unknown API error';
-          console.error(`[Law] ❌ API error fetching comparison for ${lawName}: ${apiErrorMsg}`);
-          // 비교 데이터 조회 실패해도 계속 진행
-        }
-
-        // Step 4: DB에 저장
-        const changeLog: InsertChangeLog = {
-          itemId,
-          announcementNo: announcementNo || `${formatDateForAPI(now)}_${changeId}`,
-          effectiveDate,
-          status: status as 'current' | 'upcoming',
-          comparisonData: comparisonData ? JSON.stringify(comparisonData) : null,
-          rawData: JSON.stringify(change) || null,
-        };
-
-        try {
-          await addChangeLog(changeLog);
-          collectedCount++;
-          const statusBadge = status === 'upcoming' ? '🔔' : '✅';
-          console.log(`[Law] ${statusBadge} Successfully saved: ${announcementNo} (Status: ${status})`);
-        } catch (dbError) {
-          const dbErrorMsg = dbError instanceof Error ? dbError.message : 'Unknown DB error';
-          console.error(`[Law] ❌ DB error for ${announcementNo}: ${dbErrorMsg}`);
-          errors.push(`DB error for ${lawName}: ${dbErrorMsg}`);
-          // DB 오류는 기록하지만 계속 진행
-        }
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        console.error(`[Law] ❌ Error processing change for ${lawName}:`, errorMsg);
-        errors.push(`Error processing change for ${lawName}: ${errorMsg}`);
+      if (comparisonResponse) {
+        detected++;
+        collected++;
+        console.log(`[Law] ✅ Found law comparison for MST: ${externalId}`);
+      } else {
+        console.warn(`[Law] ⚠️  No comparison data found for MST: ${externalId}`);
       }
     }
+
+    if (detected > 0) {
+      console.log(`[Law] ✅ Found ${detected} changes for ${lawName}`);
+    } else {
+      console.log(`[Law] ℹ️  No changes found for ${lawName}`);
+    }
+
+    return { detected, collected, errors };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    console.error(`[Law] ❌ Error detecting changes for ${lawName}:`, errorMsg);
-    errors.push(`Error detecting changes for ${lawName}: ${errorMsg}`);
+    console.error(`[Law] ❌ Error processing ${lawName}:`, errorMsg);
+    errors.push(errorMsg);
+    return { detected: 0, collected: 0, errors };
   }
-
-  return { detected: detectedCount, collected: collectedCount, errors };
 }

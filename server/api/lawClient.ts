@@ -1,6 +1,11 @@
 /**
  * 국가법령정보 API 클라이언트
  * 법령(lawService.do)과 행정규칙(admRulService.do)을 엄격하게 분리
+ * 
+ * 1. 법령 개정 이력: target=lsHstInf (날짜별 루프)
+ * 2. 신구법 비교: target=oldAndNew (상세 조회)
+ * 3. 행정규칙: target=admrul (prmlYd 파라미터)
+ * 
  * Rate Limiting: 2개씩, 1.5초 간격
  */
 
@@ -93,229 +98,179 @@ class LawAPIClient {
   }
 
   /**
-   * 법령 변경이력 목록 조회 API
-   * 최근 1년 ~ 미래 시행 예정 건을 조회
+   * 1. 법령 개정 이력 조회 (날짜별)
+   * target=lsHstInf를 사용하여 특정 날짜의 모든 법령 변경이력 조회
    * 
-   * API: http://www.law.go.kr/DRF/lawSearch.do?target=lsHstInf
+   * API: http://www.law.go.kr/DRF/lawSearch.do?target=lsHstInf&OC=[인증키]&regDt=[날짜]&type=JSON
    * 
-   * @param regDt - 법령 변경일 (YYYYMMDD 형식)
-   * @param options - 조회 옵션 (소관부처, 페이지 등)
+   * @param regDt - 변경일자 (YYYYMMDD 형식)
    */
-  async getLawChangeHistory(
-    regDt: string,
-    options?: { org?: string; display?: number; page?: number }
-  ): Promise<any> {
+  async getLawChangeHistoryByDate(regDt: string): Promise<any> {
     return withRetry(async () => {
       await this.rateLimiter.wait();
 
       const params = {
-        target: 'lsHstInf',
+        target: 'lsHstInf',  // 법령 개정 이력 조회
         OC: OC_ID,
         type: 'JSON',
-        regDt: regDt,
-        org: options?.org,
-        display: options?.display || 100,
-        page: options?.page || 1,
-      };
-
-      // undefined 제거
-      Object.keys(params).forEach(key => {
-        if ((params as any)[key] === undefined) {
-          delete (params as any)[key];
-        }
-      });
-
-      console.log(`[LawClient] Fetching law change history for ${regDt}`);
-      const response = await this.client.get('/lawSearch.do', { params });
-
-      if (response.data && typeof response.data === 'object') {
-        return response.data;
-      }
-
-      throw new Error('Invalid response format');
-    });
-  }
-
-  /**
-   * 개별 법령의 시행법령 변경이력 조회
-   * target=efLaw를 사용하여 시행법령 포함 조회
-   * 
-   * API: http://www.law.go.kr/DRF/lawSearch.do?target=efLaw
-   * 
-   * @param mst - 법령 MST 코드
-   * @param regDt - 변경일 (YYYYMMDD 형식)
-   */
-  async getLawChangesByMST(
-    mst: string,
-    regDt: string
-  ): Promise<any> {
-    return withRetry(async () => {
-      await this.rateLimiter.wait();
-
-      const params = {
-        target: 'law',  // 'efLaw' 대신 'law' 사용
-        OC: OC_ID,
-        type: 'JSON',
-        MST: mst,
         regDt: regDt,
         display: 100,
         page: 1,
       };
 
-      // 전체 요청 URL 출력 (인증키 포함)
+      // 전체 요청 URL 출력
       const fullUrl = `${LAW_API_BASE_URL}/lawSearch.do?${Object.entries(params)
         .map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`)
         .join('&')}`;
-      console.log(`[LawClient] 📡 Full Request URL:\n${fullUrl}\n`);
+      console.log(`[LawClient] 📡 Full Request URL (lsHstInf):\n${fullUrl}\n`);
 
-      console.log(`[LawClient] 🔍 Fetching law changes for MST: ${mst}, regDt: ${regDt}`);
+      console.log(`[LawClient] 🔍 Fetching law change history for date: ${regDt}`);
       const response = await this.client.get('/lawSearch.do', { params });
 
       if (!response.data) {
-        console.warn(`[LawClient] ⚠️  Empty response for MST: ${mst}`);
+        console.warn(`[LawClient] ⚠️  Empty response for date: ${regDt}`);
         return { data: [] };
       }
 
       if (response.data.error) {
-        console.error(`[LawClient] ❌ API Error for MST ${mst}:`, response.data.error);
+        console.error(`[LawClient] ❌ API Error for date ${regDt}:`, response.data.error);
         return { data: [], error: response.data.error };
       }
 
-      console.log(`[LawClient] ✅ Response for MST ${mst}:`, JSON.stringify(response.data).substring(0, 200));
+      console.log(`[LawClient] ✅ Response for date ${regDt}: ${Array.isArray(response.data.data) ? response.data.data.length : 0} items`);
       return response.data;
     });
   }
 
   /**
-   * 신구법 본문 조회 API (법령 전용)
-   * lawService.do 엔드포인트 사용
+   * 2. 신구법 비교 데이터 조회 (법령 전용)
+   * target=oldAndNew를 사용하여 특정 법령의 신구법 비교 데이터 조회
    * 
-   * API: http://www.law.go.kr/DRF/lawService.do?target=oldAndNew
+   * API: http://www.law.go.kr/DRF/lawService.do?target=oldAndNew&MST=[번호]&OC=[인증키]&type=JSON
    * 
-   * @param params - ID 또는 MST 중 하나는 필수
+   * @param mst - 법령 MST 코드
    */
-  async getLawComparison(params: {
-    ID?: string;
-    MST?: string;
-    LM?: string;
-    LD?: number;
-    LN?: number;
-  }): Promise<any> {
+  async getLawComparison(mst: string): Promise<any> {
     return withRetry(async () => {
       await this.rateLimiter.wait();
 
-      const requestParams = {
-        target: 'oldAndNew',
+      const params = {
+        target: 'oldAndNew',  // 신구법 비교
         OC: OC_ID,
         type: 'JSON',
-        ...params,
+        MST: mst,
       };
 
-      // undefined 제거
-      Object.keys(requestParams).forEach(key => {
-        if ((requestParams as any)[key] === undefined) {
-          delete (requestParams as any)[key];
-        }
-      });
+      // 전체 요청 URL 출력
+      const fullUrl = `${LAW_API_BASE_URL}/lawService.do?${Object.entries(params)
+        .map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`)
+        .join('&')}`;
+      console.log(`[LawClient] 📡 Full Request URL (oldAndNew):\n${fullUrl}\n`);
 
-      console.log(`[LawClient] Fetching law comparison for MST/ID: ${params.MST || params.ID}`);
-      const response = await this.client.get('/lawService.do', { params: requestParams });
+      console.log(`[LawClient] 🔍 Fetching law comparison for MST: ${mst}`);
+      const response = await this.client.get('/lawService.do', { params });
 
-      if (response.data && typeof response.data === 'object') {
-        return response.data;
+      if (!response.data) {
+        console.warn(`[LawClient] ⚠️  Empty response for MST: ${mst}`);
+        return null;
       }
 
-      throw new Error('Invalid response format');
+      if (response.data.error) {
+        console.error(`[LawClient] ❌ API Error for MST ${mst}:`, response.data.error);
+        return null;
+      }
+
+      console.log(`[LawClient] ✅ Response for MST ${mst}: ${JSON.stringify(response.data).substring(0, 100)}`);
+      return response.data;
     });
   }
 
   /**
-   * 행정규칙 목록 조회 API
-   * lawSearch.do 엔드포인트 사용 (target=admrul)
+   * 3. 행정규칙(고시) 조회
+   * target=admrul을 사용하여 기간 내 모든 고시 조회
    * 
-   * API: http://www.law.go.kr/DRF/lawSearch.do?target=admrul
+   * API: http://www.law.go.kr/DRF/lawSearch.do?target=admrul&OC=[인증키]&prmlYd=[시작]~[종료]&type=JSON
    * 
-   * @param date - 행정규칙 발령일자 (YYYYMMDD 형식)
-   * @param options - 조회 옵션
+   * @param startDate - 시작일자 (YYYYMMDD)
+   * @param endDate - 종료일자 (YYYYMMDD)
    */
-  async getAdminRuleList(
-    date?: string,
-    options?: { org?: string; knd?: string; display?: number; page?: number }
-  ): Promise<any> {
+  async getAdminRulesByDateRange(startDate: string, endDate: string): Promise<any> {
     return withRetry(async () => {
       await this.rateLimiter.wait();
 
-      const params: any = {
-        target: 'admrul',
+      const params = {
+        target: 'admrul',  // 행정규칙(고시)
         OC: OC_ID,
         type: 'JSON',
-        nw: 1, // 1: 현행
-        display: options?.display || 100,
-        page: options?.page || 1,
+        prmlYd: `${startDate}~${endDate}`,  // 발령일자 범위
+        display: 100,
+        page: 1,
       };
 
-      // 날짜 필수 (date: all 대신 정확한 시작일자 사용)
-      if (date) {
-        params.date = date;
-      } else {
-        params.date = '20230411';  // 기본값: 3년 전
-      }
-      if (options?.org) {
-        params.org = options.org;
-      }
-      if (options?.knd) {
-        params.knd = options.knd;
-      }
+      // 전체 요청 URL 출력
+      const fullUrl = `${LAW_API_BASE_URL}/lawSearch.do?${Object.entries(params)
+        .map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`)
+        .join('&')}`;
+      console.log(`[LawClient] 📡 Full Request URL (admrul):\n${fullUrl}\n`);
 
-      console.log(`[LawClient] Fetching admin rule list for date: ${date || 'all'}`);
+      console.log(`[LawClient] 🔍 Fetching admin rules for date range: ${startDate} ~ ${endDate}`);
       const response = await this.client.get('/lawSearch.do', { params });
 
-      if (response.data && typeof response.data === 'object') {
-        return response.data;
+      if (!response.data) {
+        console.warn(`[LawClient] ⚠️  Empty response for admin rules`);
+        return { data: [] };
       }
 
-      throw new Error('Invalid response format');
+      if (response.data.error) {
+        console.error(`[LawClient] ❌ API Error for admin rules:`, response.data.error);
+        return { data: [], error: response.data.error };
+      }
+
+      console.log(`[LawClient] ✅ Response for admin rules: ${Array.isArray(response.data.data) ? response.data.data.length : 0} items`);
+      return response.data;
     });
   }
 
   /**
-   * 행정규칙 신구규칙 비교 본문 조회 API (행정규칙 전용)
-   * lawService.do 엔드포인트 사용 (target=admrulOldAndNew)
+   * 4. 행정규칙 신구규칙 비교 (행정규칙 전용)
+   * target=admrulOldAndNew를 사용하여 특정 고시의 신구규칙 비교
    * 
-   * API: http://www.law.go.kr/DRF/lawService.do?target=admrulOldAndNew
+   * API: http://www.law.go.kr/DRF/lawService.do?target=admrulOldAndNew&LID=[번호]&OC=[인증키]&type=JSON
    * 
-   * @param params - ID 또는 LID 중 하나는 필수
+   * @param lid - 행정규칙 LID 코드
    */
-  async getAdminRuleComparison(params: {
-    ID?: string;
-    LID?: string;
-    LM?: string;
-  }): Promise<any> {
+  async getAdminRuleComparison(lid: string): Promise<any> {
     return withRetry(async () => {
       await this.rateLimiter.wait();
 
-      const requestParams = {
-        target: 'admrulOldAndNew',
+      const params = {
+        target: 'admrulOldAndNew',  // 행정규칙 신구규칙 비교
         OC: OC_ID,
         type: 'JSON',
-        ...params,
+        LID: lid,
       };
 
-      // undefined 제거
-      Object.keys(requestParams).forEach(key => {
-        if ((requestParams as any)[key] === undefined) {
-          delete (requestParams as any)[key];
-        }
-      });
+      // 전체 요청 URL 출력
+      const fullUrl = `${LAW_API_BASE_URL}/lawService.do?${Object.entries(params)
+        .map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`)
+        .join('&')}`;
+      console.log(`[LawClient] 📡 Full Request URL (admrulOldAndNew):\n${fullUrl}\n`);
 
-      console.log(`[LawClient] Fetching admin rule comparison for ID/LID: ${params.ID || params.LID}`);
-      const response = await this.client.get('/lawService.do', { params: requestParams });
+      console.log(`[LawClient] 🔍 Fetching admin rule comparison for LID: ${lid}`);
+      const response = await this.client.get('/lawService.do', { params });
 
-      if (response.data && typeof response.data === 'object') {
-        return response.data;
+      if (!response.data) {
+        console.warn(`[LawClient] ⚠️  Empty response for LID: ${lid}`);
+        return null;
       }
 
-      throw new Error('Invalid response format');
+      if (response.data.error) {
+        console.error(`[LawClient] ❌ API Error for LID ${lid}:`, response.data.error);
+        return null;
+      }
+
+      console.log(`[LawClient] ✅ Response for LID ${lid}: ${JSON.stringify(response.data).substring(0, 100)}`);
+      return response.data;
     });
   }
 }

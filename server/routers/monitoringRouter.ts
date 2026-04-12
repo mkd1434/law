@@ -168,7 +168,17 @@ export const monitoringRouter = router({
           status: input?.status,
           limit: input?.limit || 100,
         });
-        return logs || [];
+        
+        // 각 로그에 lawName 필드 추가 (monitoredItems에서 조회)
+        const items = await getMonitoredItems();
+        const itemMap = new Map(items.map((item: any) => [item.id, item.name]));
+        
+        const enrichedLogs = (logs || []).map((log: any) => ({
+          ...log,
+          lawName: itemMap.get(log.itemId) || '미지정',
+        }));
+        
+        return enrichedLogs;
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
         console.error('[monitoringRouter] Error fetching change logs:', errorMsg);

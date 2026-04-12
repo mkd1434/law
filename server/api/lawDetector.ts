@@ -8,7 +8,7 @@
  */
 
 import { lawAPIClient } from './lawClient';
-import { getDb } from '../db';
+import { getDb, addChangeLog } from '../db';
 import { monitoredItems } from '../../drizzle/schema';
 import { eq } from 'drizzle-orm';
 
@@ -99,8 +99,25 @@ export async function detectAndCollectLawChanges(
 
       if (comparisonResponse) {
         detected++;
-        collected++;
-        console.log(`[Law] ✅ Found law comparison for MST: ${externalId}`);
+        
+        // DB에 변경 로그 저장
+        try {
+          const now = new Date();
+          await addChangeLog({
+            itemId,
+            announcementNo: `MST-${externalId}`,
+            effectiveDate: now,
+            status: 'current',
+            comparisonData: comparisonResponse,
+            rawData: comparisonResponse,
+          });
+          collected++;
+          console.log(`[Law] ✅ Saved law comparison for MST: ${externalId}`);
+        } catch (saveError) {
+          const saveErrorMsg = saveError instanceof Error ? saveError.message : String(saveError);
+          console.error(`[Law] ❌ Failed to save law comparison: ${saveErrorMsg}`);
+          errors.push(`Failed to save: ${saveErrorMsg}`);
+        }
       } else {
         console.warn(`[Law] ⚠️  No comparison data found for MST: ${externalId}`);
       }

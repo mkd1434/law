@@ -8,7 +8,7 @@
  */
 
 import { lawAPIClient } from './lawClient';
-import { getDb, addChangeLog } from '../db';
+import { getDb, upsertChangeLog } from '../db';
 import { monitoredItems } from '../../drizzle/schema';
 import { eq } from 'drizzle-orm';
 
@@ -116,7 +116,7 @@ export async function detectAndCollectLawChanges(
             }
           }
           
-          await addChangeLog({
+          await upsertChangeLog({
             itemId,
             announcementNo: `MST-${externalId}`,
             effectiveDate,

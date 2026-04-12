@@ -164,6 +164,40 @@ export async function addChangeLog(log: InsertChangeLog) {
 }
 
 /**
+ * 변경 로그 Upsert (이미 있으면 업데이트, 없으면 추가)
+ * announcementNo 기반으로 중복 체크
+ */
+export async function upsertChangeLog(log: InsertChangeLog) {
+  const db = await getDb();
+  if (!db) throw new Error('Database not available');
+  
+  // announcementNo로 기존 데이터 확인
+  const existing = await db
+    .select()
+    .from(changeLogs)
+    .where(eq(changeLogs.announcementNo, log.announcementNo))
+    .limit(1);
+  
+  if (existing.length > 0) {
+    // 기존 데이터 업데이트
+    console.log(`[DB] 📝 Updating existing change log: ${log.announcementNo}`);
+    return db.update(changeLogs)
+      .set({
+        effectiveDate: log.effectiveDate,
+        status: log.status,
+        comparisonData: log.comparisonData,
+        rawData: log.rawData,
+      })
+      .where(eq(changeLogs.announcementNo, log.announcementNo));
+  } else {
+    // 새로운 데이터 추가
+    console.log(`[DB] ✨ Adding new change log: ${log.announcementNo}`);
+    return db.insert(changeLogs).values(log);
+  }
+}
+
+
+/**
  * 변경 로그 업데이트
  */
 export async function updateChangeLog(id: number, updates: Partial<InsertChangeLog>) {

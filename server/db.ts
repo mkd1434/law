@@ -171,34 +171,24 @@ export async function upsertChangeLog(log: InsertChangeLog) {
   const db = await getDb();
   if (!db) throw new Error('Database not available');
   
-  // announcementNo로 기존 데이터 확인
-  const existing = await db
-    .select()
-    .from(changeLogs)
-    .where(eq(changeLogs.announcementNo, log.announcementNo))
-    .limit(1);
+  // Delete then Insert 방식: 기존 데이터 삭제 후 새로 삽입 (무조건 덮어쓰기)
+  console.log(`[DB] 🔄 Delete then Insert: ${log.announcementNo}`);
   
-  if (existing.length > 0) {
-    // 기존 데이터 업데이트 (efYd 포함)
-    console.log(`[DB] 📝 Updating existing change log: ${log.announcementNo}`);
-    console.log(`[DB] 📝 Update effectiveDate: ${existing[0].effectiveDate} -> ${log.effectiveDate?.toISOString()}`);
-    const result = await db.update(changeLogs)
-      .set({
-        effectiveDate: log.effectiveDate,
-        status: log.status,
-        comparisonData: log.comparisonData,
-        rawData: log.rawData,
-      })
+  try {
+    // 기존 데이터 삭제
+    const deleteResult = await db.delete(changeLogs)
       .where(eq(changeLogs.announcementNo, log.announcementNo));
-    console.log(`[DB] ✅ Updated: ${log.announcementNo}`);
-    return result;
-  } else {
-    // 새로운 데이터 추가
-    console.log(`[DB] ✨ Adding new change log: ${log.announcementNo}`);
+    console.log(`[DB] 🗑️  Deleted existing records for: ${log.announcementNo}`);
+    
+    // 새로운 데이터 삽입
+    console.log(`[DB] ✨ Inserting new change log: ${log.announcementNo}`);
     console.log(`[DB] ✨ effectiveDate: ${log.effectiveDate?.toISOString()}`);
     const result = await db.insert(changeLogs).values(log);
-    console.log(`[DB] ✅ Added: ${log.announcementNo}`);
+    console.log(`[DB] ✅ Successfully saved: ${log.announcementNo}`);
     return result;
+  } catch (error) {
+    console.error(`[DB] ❌ Error in upsertChangeLog: ${error}`);
+    throw error;
   }
 }
 

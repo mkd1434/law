@@ -181,6 +181,21 @@ class LawAPIClient {
       }
 
       console.log(`[LawClient] ✅ Response for MST ${mst}: ${JSON.stringify(response.data).substring(0, 100)}`);
+      
+      // === DEBUG: 전체 응답 구조 로깅 ===
+      console.log(`[LawClient] 🔍 FULL RESPONSE STRUCTURE for MST ${mst}:`);
+      console.log(JSON.stringify(response.data, null, 2));
+      
+      // === DEBUG: efYd 경로 탐색 ===
+      const efYdPaths = [
+        response.data?.efYd,
+        response.data?.기본정보?.efYd,
+        response.data?.신조문목록?.[0]?.efYd,
+        response.data?.oldAndNew?.efYd,
+        response.data?.oldAndNew?.기본정보?.efYd,
+      ];
+      console.log(`[LawClient] 🔍 Searching efYd in paths:`, efYdPaths.filter(p => p !== undefined));
+      
       return response.data;
     });
   }

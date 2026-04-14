@@ -104,9 +104,11 @@ export async function detectAndCollectLawChanges(
         try {
           // API 응답에서 efYd (시행일자) 추출
           let effectiveDate = new Date();
+          let efYdStr = formatDateForAPI(new Date()); // 기본값: 오늘 날짜 (YYYYMMDD)
+          
           if (comparisonResponse?.efYd) {
             // 날짜 형식: YYYYMMDD -> Date 객체로 변환
-            const efYdStr = String(comparisonResponse.efYd);
+            efYdStr = String(comparisonResponse.efYd);
             console.log(`[DB Save] efYd: ${efYdStr} (raw value from API)`);
             if (efYdStr.length === 8) {
               const year = parseInt(efYdStr.substring(0, 4));
@@ -117,15 +119,19 @@ export async function detectAndCollectLawChanges(
               console.log(`[DB Save] Parsed date: year=${year}, month=${month}, day=${day}`);
             } else {
               console.warn(`[DB Save] Invalid efYd format: ${efYdStr} (expected 8 digits)`);
+              efYdStr = formatDateForAPI(new Date()); // 기본값으로 재설정
             }
           } else {
             console.warn(`[DB Save] No efYd in response, using current date`);
+            efYdStr = formatDateForAPI(new Date()); // 기본값: 오늘 날짜
           }
           
-          console.log(`[DB Save] Saving to DB - announcementNo: MST-${externalId}, effectiveDate: ${effectiveDate.toISOString()}`);
+          // announcementNo: MST-{externalId}_{efYd} (고유성 보장)
+          const announcementNo = `MST-${externalId}_${efYdStr}`;
+          console.log(`[DB Save] Saving to DB - announcementNo: ${announcementNo}, effectiveDate: ${effectiveDate.toISOString()}`);
           await upsertChangeLog({
             itemId,
-            announcementNo: `MST-${externalId}`,
+            announcementNo,
             effectiveDate,
             status: 'current',
             comparisonData: comparisonResponse,

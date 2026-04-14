@@ -1,5 +1,4 @@
 import { useRoute, useLocation } from 'wouter';
-import { useAuth } from '@/_core/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -9,28 +8,20 @@ import { trpc } from '@/lib/trpc';
 /**
  * 신구법 비교 상세 페이지
  * 좌측(구법) vs 우측(신법) 2컬럼 레이아웃으로 변경 내용 대조
+ * 로그인 없이 누구나 접근 가능
  */
 export default function DetailView() {
   const [, params] = useRoute('/detail/:id');
   const [, navigate] = useLocation();
-  const { isAuthenticated } = useAuth();
   const changeLogId = params?.id ? parseInt(params.id) : null;
 
-  // 변경 로그 조회
+  // 변경 로그 조회 (공개 접근)
   const { data: changeLogs, isLoading } = trpc.monitoring.getChangeLogs.useQuery(
     { limit: 1000 },
-    { enabled: isAuthenticated }
+    { enabled: true }
   );
 
   const changeLog = changeLogs?.find((log: any) => log.id === changeLogId);
-
-  if (!isAuthenticated) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p className="text-gray-600">로그인이 필요합니다.</p>
-      </div>
-    );
-  }
 
   if (isLoading) {
     return (

@@ -94,7 +94,28 @@ export async function detectAndCollectLawChanges(
       // === 법령(법률, 령, 규칙) 처리 ===
       console.log(`[Law] 📋 Processing as LAW (법령): ${lawName}`);
 
-      // 신구법 비교 조회 (직접 MST 사용)
+      // 1단계: lsHstInf API로 최근 3년 내 실제 개정 이력 확인
+      console.log(`[Law] 🔍 Step 1: Checking actual change history using lsHstInf API...`);
+      const changeHistoryResponse = await lawAPIClient.getLawChangeHistoryByDate(regDt);
+      const changeHistories = Array.isArray(changeHistoryResponse?.data) ? changeHistoryResponse.data : [];
+      console.log(`[Law] ✅ Found ${changeHistories.length} change histories in last 3 years`);
+      
+      // 2단계: 변경 이력에서 현재 MST와 일치하는 항목 찾기
+      const matchingHistory = changeHistories.find((history: any) => {
+        const historyMst = String(history.법령ID || history.MST || '');
+        const currentMst = String(externalId);
+        return historyMst === currentMst;
+      });
+      
+      if (!matchingHistory) {
+        console.warn(`[Law] ⚠️  No actual change history found for MST ${externalId} in last 3 years`);
+        return { detected: 0, collected: 0, errors: [`No change history found for ${lawName}`] };
+      }
+      
+      console.log(`[Law] 📌 Found matching change history: ${matchingHistory.법령명}`);
+      detected++;
+      
+      // 3단계: 신구법 비교 조회 (직접 MST 사용)
       const comparisonResponse = await lawAPIClient.getLawComparison(externalId);
 
       if (comparisonResponse) {
@@ -102,28 +123,21 @@ export async function detectAndCollectLawChanges(
         
         // DB에 변경 로그 저장
         try {
-          // API 응답에서 efYd (시행일자) 추출
+          // API 응답에서 시행일자 추출 (efYd 또는 시행일자 필드)
           let effectiveDate = new Date();
           let efYdStr = formatDateForAPI(new Date()); // 기본값: 오늘 날짜 (YYYYMMDD)
           
-          if (comparisonResponse?.efYd) {
-            // 날짜 형식: YYYYMMDD -> Date 객체로 변환
-            efYdStr = String(comparisonResponse.efYd);
-            console.log(`[DB Save] efYd: ${efYdStr} (raw value from API)`);
-            if (efYdStr.length === 8) {
-              const year = parseInt(efYdStr.substring(0, 4));
-              const month = parseInt(efYdStr.substring(4, 6));
-              const day = parseInt(efYdStr.substring(6, 8));
-              effectiveDate = new Date(year, month - 1, day);
-              console.log(`[Law] 📅 Extracted efYd: ${efYdStr} -> ${effectiveDate.toISOString()}`);
-              console.log(`[DB Save] Parsed date: year=${year}, month=${month}, day=${day}`);
-            } else {
-              console.warn(`[DB Save] Invalid efYd format: ${efYdStr} (expected 8 digits)`);
-              efYdStr = formatDateForAPI(new Date()); // 기본값으로 재설정
-            }
+          const extractedDate = comparisonResponse?._extractedEffectiveDate;
+          if (extractedDate && String(extractedDate).length === 8) {
+            efYdStr = String(extractedDate);
+            const year = parseInt(efYdStr.substring(0, 4));
+            const month = parseInt(efYdStr.substring(4, 6));
+            const day = parseInt(efYdStr.substring(6, 8));
+            effectiveDate = new Date(year, month - 1, day);
+            console.log(`[Law] 📅 Using extracted effective date: ${efYdStr}`);
           } else {
-            console.warn(`[DB Save] No efYd in response, using current date`);
-            efYdStr = formatDateForAPI(new Date()); // 기본값: 오늘 날짜
+            console.warn(`[Law] ⚠️  No valid effective date found, using current date`);
+            efYdStr = formatDateForAPI(new Date());
           }
           
           // announcementNo: MST-{externalId}_{efYd} (고유성 보장)

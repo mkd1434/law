@@ -182,19 +182,28 @@ class LawAPIClient {
 
       console.log(`[LawClient] ✅ Response for MST ${mst}: ${JSON.stringify(response.data).substring(0, 100)}`);
       
-      // === DEBUG: 전체 응답 구조 로깅 ===
-      console.log(`[LawClient] 🔍 FULL RESPONSE STRUCTURE for MST ${mst}:`);
-      console.log(JSON.stringify(response.data, null, 2));
+      // === 시행일자 추출 로직 ===
+      const extractEffectiveDate = (data: any): string | null => {
+        // 1. efYd 찾기
+        if (data?.efYd) return String(data.efYd);
+        if (data?.기본정보?.efYd) return String(data.기본정보.efYd);
+        if (data?.신조문목록?.[0]?.efYd) return String(data.신조문목록[0].efYd);
+        if (data?.oldAndNew?.efYd) return String(data.oldAndNew.efYd);
+        if (data?.oldAndNew?.기본정보?.efYd) return String(data.oldAndNew.기본정보.efYd);
+        
+        // 2. 시행일자 찾기 (한글 키값)
+        if (data?.oldAndNew?.신조문_기본정보?.시행일자) return String(data.oldAndNew.신조문_기본정보.시행일자);
+        if (data?.신조문_기본정보?.시행일자) return String(data.신조문_기본정보.시행일자);
+        if (data?.기본정보?.시행일자) return String(data.기본정보.시행일자);
+        
+        return null;
+      };
       
-      // === DEBUG: efYd 경로 탐색 ===
-      const efYdPaths = [
-        response.data?.efYd,
-        response.data?.기본정보?.efYd,
-        response.data?.신조문목록?.[0]?.efYd,
-        response.data?.oldAndNew?.efYd,
-        response.data?.oldAndNew?.기본정보?.efYd,
-      ];
-      console.log(`[LawClient] 🔍 Searching efYd in paths:`, efYdPaths.filter(p => p !== undefined));
+      const extractedDate = extractEffectiveDate(response.data);
+      if (extractedDate) {
+        console.log(`[LawClient] 📅 Extracted effective date: ${extractedDate}`);
+        response.data._extractedEffectiveDate = extractedDate;
+      }
       
       return response.data;
     });

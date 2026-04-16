@@ -128,30 +128,17 @@ export async function initializeSeedData(): Promise<void> {
       return;
     }
 
-    // 기존 데이터 확인 (데이터 보존)
-    console.log('[InitSeed] 📋 기존 데이터 확인 중...');
-    const existing = await db.select().from(monitoredItems);
-    console.log(`[InitSeed] 📊 현재 DB에 ${existing.length}개의 모니터링 대상이 있습니다`);
+    // 기존 데이터 무시하고 무조건 재긁기
+    console.log('[InitSeed] 🔄 모든 데이터를 무조건 다시 긁어옵니다 (중복 체크 제거)');
 
-    // 새로운 데이터 삽입 (중복 제거)
+    // 새로운 데이터 삽입 (중복 체크 없음)
     let insertedCount = 0;
-    let skippedCount = 0;
 
     for (const record of records) {
       try {
         const lawName = record.법령명.trim();
         const lawMST = record.법령MST.trim();
         const lawType = determineType(lawName);  // lawName 기반 분류
-
-        // 중복 확인
-        const isDuplicate = existing.some(
-          item => item.externalId === lawMST && item.name === lawName
-        );
-
-        if (isDuplicate) {
-          skippedCount++;
-          continue;
-        }
 
         // 삽입
         await db.insert(monitoredItems).values({
@@ -169,11 +156,9 @@ export async function initializeSeedData(): Promise<void> {
     }
 
     if (insertedCount > 0) {
-      console.log(`[InitSeed] ✅ Seed 데이터 로드 완료 (신규: ${insertedCount}개 추가)`);
-    } else if (skippedCount > 0) {
-      console.log(`[InitSeed] ℹ️  모든 데이터가 이미 존재합니다 (중복: ${skippedCount}개)`);
+      console.log(`[InitSeed] ✅ Seed 데이터 로드 완료 (${insertedCount}개 추가/업데이트)`);
     } else {
-      console.log('[InitSeed] ℹ️  추가할 새로운 데이터가 없습니다');
+      console.log('[InitSeed] ℹ️  추가할 데이터가 없습니다');
     }
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);

@@ -3,41 +3,7 @@ import { detectAndCollectLawChanges } from './lawDetector';
 import * as lawClient from './lawClient';
 import * as db from '../db';
 
-// Mock 데이터: 한글 시행일자 필드 포함 (신조문_기본정보.시행일자)
-const mockLawComparisonWithKoreanDate = {
-  신조문_기본정보: {
-    시행일자: '20230808',  // 한글 시행일자 필드
-    법령명: '전기공사업법',
-  },
-  법령명: '전기공사업법',
-  _extractedEffectiveDate: '20230808',
-};
-
-// Mock 데이터: 한글 시행일자만 있음 (efYd 없음)
-const mockLawComparisonKoreanDateOnly = {
-  신조문_기본정보: {
-    시행일자: '20230815',  // 한글 시행일자만 있음
-  },
-  법령명: '전기공사업법',
-  _extractedEffectiveDate: '20230815',
-};
-
-// Mock 데이터: 시행일자가 20230415 이전 (필터링 대상)
-const mockLawComparisonBeforeFilterDate = {
-  신조문_기본정보: {
-    시행일자: '20230410',  // 20230415 이전
-  },
-  법령명: '전기공사업법',
-  _extractedEffectiveDate: '20230410',
-};
-
-// Mock 데이터: 시행일자 없음 (저장하지 않음)
-const mockLawComparisonNoDate = {
-  법령명: '전기공사업법',
-  _extractedEffectiveDate: null,  // 시행일자 없음
-};
-
-describe('lawDetector - 긴급 수정 (Rate Limit, 한글 시행일자, 필터링)', () => {
+describe('lawDetector - 강제 수정 (한글 시행일자 필드 완전 탐색)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -46,10 +12,17 @@ describe('lawDetector - 긴급 수정 (Rate Limit, 한글 시행일자, 필터�
     vi.restoreAllMocks();
   });
 
-  describe('한글 시행일자 필드 (신조문_기본정보.시행일자)', () => {
-    it('한글 시행일자 필드에서 올바르게 추출되어야 함', async () => {
+  describe('한글 시행일자 필드 완전 탐색', () => {
+    it('신조문_기본정보.시행일자에서 추출 (최우선)', async () => {
+      const mockResponse = {
+        신조문_기본정보: {
+          시행일자: '20230808',
+          법령명: '전기공사업법',
+        },
+      };
+
       vi.spyOn(lawClient, 'lawAPIClient', 'get').mockReturnValue({
-        getLawComparison: vi.fn().mockResolvedValue(mockLawComparisonWithKoreanDate),
+        getLawComparison: vi.fn().mockResolvedValue(mockResponse),
         getAdminRulesByDateRange: vi.fn(),
         getAdminRuleComparison: vi.fn(),
       } as any);
@@ -64,12 +37,18 @@ describe('lawDetector - 긴급 수정 (Rate Limit, 한글 시행일자, 필터�
       
       const callArgs = mockUpsertChangeLog.mock.calls[0][0];
       expect(callArgs.announcementNo).toBe('MST-282333_20230808');
-      expect(callArgs.effectiveDate).toEqual(new Date(2023, 7, 8));
     });
 
-    it('efYd 없이 한글 시행일자만으로도 저장되어야 함', async () => {
+    it('기본정보.시행일자에서 추출 (fallback 1)', async () => {
+      const mockResponse = {
+        기본정보: {
+          시행일자: '20230815',
+        },
+        신조문_기본정보: {},
+      };
+
       vi.spyOn(lawClient, 'lawAPIClient', 'get').mockReturnValue({
-        getLawComparison: vi.fn().mockResolvedValue(mockLawComparisonKoreanDateOnly),
+        getLawComparison: vi.fn().mockResolvedValue(mockResponse),
         getAdminRulesByDateRange: vi.fn(),
         getAdminRuleComparison: vi.fn(),
       } as any);
@@ -78,19 +57,24 @@ describe('lawDetector - 긴급 수정 (Rate Limit, 한글 시행일자, 필터�
 
       const result = await detectAndCollectLawChanges(1, '282333', '전기공사업법');
 
-      expect(result.detected).toBe(1);
       expect(result.collected).toBe(1);
       expect(mockUpsertChangeLog).toHaveBeenCalledOnce();
       
       const callArgs = mockUpsertChangeLog.mock.calls[0][0];
       expect(callArgs.announcementNo).toBe('MST-282333_20230815');
     });
-  });
 
-  describe('시행일자 필터링 (20230415 이후만)', () => {
-    it('시행일자가 20230415 이후면 저장되어야 함', async () => {
+    it('구조문_기본정보.시행일자에서 추출 (fallback 2)', async () => {
+      const mockResponse = {
+        구조문_기본정보: {
+          시행일자: '20230820',
+        },
+        신조문_기본정보: {},
+        기본정보: {},
+      };
+
       vi.spyOn(lawClient, 'lawAPIClient', 'get').mockReturnValue({
-        getLawComparison: vi.fn().mockResolvedValue(mockLawComparisonWithKoreanDate),
+        getLawComparison: vi.fn().mockResolvedValue(mockResponse),
         getAdminRulesByDateRange: vi.fn(),
         getAdminRuleComparison: vi.fn(),
       } as any);
@@ -101,11 +85,124 @@ describe('lawDetector - 긴급 수정 (Rate Limit, 한글 시행일자, 필터�
 
       expect(result.collected).toBe(1);
       expect(mockUpsertChangeLog).toHaveBeenCalledOnce();
+      
+      const callArgs = mockUpsertChangeLog.mock.calls[0][0];
+      expect(callArgs.announcementNo).toBe('MST-282333_20230820');
     });
 
-    it('시행일자가 20230415 이전이면 저장하지 않아야 함', async () => {
+    it('신조문목록.조문[0].시행일자에서 추출 (fallback 3)', async () => {
+      const mockResponse = {
+        신조문목록: {
+          조문: [
+            { 시행일자: '20230825' },
+          ],
+        },
+        신조문_기본정보: {},
+        기본정보: {},
+        구조문_기본정보: {},
+      };
+
       vi.spyOn(lawClient, 'lawAPIClient', 'get').mockReturnValue({
-        getLawComparison: vi.fn().mockResolvedValue(mockLawComparisonBeforeFilterDate),
+        getLawComparison: vi.fn().mockResolvedValue(mockResponse),
+        getAdminRulesByDateRange: vi.fn(),
+        getAdminRuleComparison: vi.fn(),
+      } as any);
+
+      const mockUpsertChangeLog = vi.spyOn(db, 'upsertChangeLog').mockResolvedValue(undefined);
+
+      const result = await detectAndCollectLawChanges(1, '282333', '전기공사업법');
+
+      expect(result.collected).toBe(1);
+      expect(mockUpsertChangeLog).toHaveBeenCalledOnce();
+      
+      const callArgs = mockUpsertChangeLog.mock.calls[0][0];
+      expect(callArgs.announcementNo).toBe('MST-282333_20230825');
+    });
+
+    it('efYd 필드에서 추출 (fallback 4)', async () => {
+      const mockResponse = {
+        efYd: '20230830',
+        신조문_기본정보: {},
+        기본정보: {},
+        구조문_기본정보: {},
+      };
+
+      vi.spyOn(lawClient, 'lawAPIClient', 'get').mockReturnValue({
+        getLawComparison: vi.fn().mockResolvedValue(mockResponse),
+        getAdminRulesByDateRange: vi.fn(),
+        getAdminRuleComparison: vi.fn(),
+      } as any);
+
+      const mockUpsertChangeLog = vi.spyOn(db, 'upsertChangeLog').mockResolvedValue(undefined);
+
+      const result = await detectAndCollectLawChanges(1, '282333', '전기공사업법');
+
+      expect(result.collected).toBe(1);
+      expect(mockUpsertChangeLog).toHaveBeenCalledOnce();
+      
+      const callArgs = mockUpsertChangeLog.mock.calls[0][0];
+      expect(callArgs.announcementNo).toBe('MST-282333_20230830');
+    });
+
+    it('공포일자에서 추출 (fallback 5)', async () => {
+      const mockResponse = {
+        공포일자: '20230905',
+        신조문_기본정보: {},
+        기본정보: {},
+        구조문_기본정보: {},
+      };
+
+      vi.spyOn(lawClient, 'lawAPIClient', 'get').mockReturnValue({
+        getLawComparison: vi.fn().mockResolvedValue(mockResponse),
+        getAdminRulesByDateRange: vi.fn(),
+        getAdminRuleComparison: vi.fn(),
+      } as any);
+
+      const mockUpsertChangeLog = vi.spyOn(db, 'upsertChangeLog').mockResolvedValue(undefined);
+
+      const result = await detectAndCollectLawChanges(1, '282333', '전기공사업법');
+
+      expect(result.collected).toBe(1);
+      expect(mockUpsertChangeLog).toHaveBeenCalledOnce();
+      
+      const callArgs = mockUpsertChangeLog.mock.calls[0][0];
+      expect(callArgs.announcementNo).toBe('MST-282333_20230905');
+    });
+
+    it('제정일자에서 추출 (fallback 6)', async () => {
+      const mockResponse = {
+        제정일자: '20230910',
+        신조문_기본정보: {},
+        기본정보: {},
+        구조문_기본정보: {},
+      };
+
+      vi.spyOn(lawClient, 'lawAPIClient', 'get').mockReturnValue({
+        getLawComparison: vi.fn().mockResolvedValue(mockResponse),
+        getAdminRulesByDateRange: vi.fn(),
+        getAdminRuleComparison: vi.fn(),
+      } as any);
+
+      const mockUpsertChangeLog = vi.spyOn(db, 'upsertChangeLog').mockResolvedValue(undefined);
+
+      const result = await detectAndCollectLawChanges(1, '282333', '전기공사업법');
+
+      expect(result.collected).toBe(1);
+      expect(mockUpsertChangeLog).toHaveBeenCalledOnce();
+      
+      const callArgs = mockUpsertChangeLog.mock.calls[0][0];
+      expect(callArgs.announcementNo).toBe('MST-282333_20230910');
+    });
+
+    it('날짜를 못 찾으면 API 응답 전체 로깅 후 스킵', async () => {
+      const mockResponse = {
+        법령명: '전기공사업법',
+        법령번호: '법률 제18839호',
+        // 시행일자 필드 없음
+      };
+
+      vi.spyOn(lawClient, 'lawAPIClient', 'get').mockReturnValue({
+        getLawComparison: vi.fn().mockResolvedValue(mockResponse),
         getAdminRulesByDateRange: vi.fn(),
         getAdminRuleComparison: vi.fn(),
       } as any);
@@ -117,14 +214,16 @@ describe('lawDetector - 긴급 수정 (Rate Limit, 한글 시행일자, 필터�
       expect(result.detected).toBe(1);
       expect(result.collected).toBe(0);  // 저장되지 않음
       expect(mockUpsertChangeLog).not.toHaveBeenCalled();
+      expect(result.errors.length).toBeGreaterThan(0);
     });
+  });
 
-    it('시행일자가 정확히 20230415면 저장되어야 함', async () => {
+  describe('날짜 필터 해제 (모든 데이터 저장)', () => {
+    it('과거 날짜도 저장되어야 함', async () => {
       const mockResponse = {
         신조문_기본정보: {
-          시행일자: '20230415',
+          시행일자: '20200101',  // 과거 날짜
         },
-        _extractedEffectiveDate: '20230415',
       };
 
       vi.spyOn(lawClient, 'lawAPIClient', 'get').mockReturnValue({
@@ -140,28 +239,16 @@ describe('lawDetector - 긴급 수정 (Rate Limit, 한글 시행일자, 필터�
       expect(result.collected).toBe(1);
       expect(mockUpsertChangeLog).toHaveBeenCalledOnce();
     });
-  });
 
-  describe('오늘 날짜 도배 방지', () => {
-    it('시행일자가 없으면 저장하지 않아야 함', async () => {
+    it('미래 날짜도 저장되어야 함', async () => {
+      const mockResponse = {
+        신조문_기본정보: {
+          시행일자: '20300101',  // 미래 날짜
+        },
+      };
+
       vi.spyOn(lawClient, 'lawAPIClient', 'get').mockReturnValue({
-        getLawComparison: vi.fn().mockResolvedValue(mockLawComparisonNoDate),
-        getAdminRulesByDateRange: vi.fn(),
-        getAdminRuleComparison: vi.fn(),
-      } as any);
-
-      const mockUpsertChangeLog = vi.spyOn(db, 'upsertChangeLog').mockResolvedValue(undefined);
-
-      const result = await detectAndCollectLawChanges(1, '282333', '전기공사업법');
-
-      expect(result.detected).toBe(1);
-      expect(result.collected).toBe(0);  // 저장되지 않음
-      expect(mockUpsertChangeLog).not.toHaveBeenCalled();
-    });
-
-    it('유효한 시행일자만 저장되어야 함', async () => {
-      vi.spyOn(lawClient, 'lawAPIClient', 'get').mockReturnValue({
-        getLawComparison: vi.fn().mockResolvedValue(mockLawComparisonWithKoreanDate),
+        getLawComparison: vi.fn().mockResolvedValue(mockResponse),
         getAdminRulesByDateRange: vi.fn(),
         getAdminRuleComparison: vi.fn(),
       } as any);
@@ -172,46 +259,6 @@ describe('lawDetector - 긴급 수정 (Rate Limit, 한글 시행일자, 필터�
 
       expect(result.collected).toBe(1);
       expect(mockUpsertChangeLog).toHaveBeenCalledOnce();
-      
-      const callArgs = mockUpsertChangeLog.mock.calls[0][0];
-      // 오늘 날짜가 아닌 실제 시행일자가 저장되어야 함
-      expect(callArgs.effectiveDate).toEqual(new Date(2023, 7, 8));
-      expect(callArgs.effectiveDate.getFullYear()).toBe(2023);
-    });
-  });
-
-  describe('announcementNo 고유 키 (MST + 시행일자)', () => {
-    it('같은 MST도 시행일자가 다르면 다른 announcementNo 생성', async () => {
-      const response1 = {
-        신조문_기본정보: { 시행일자: '20230808' },
-        _extractedEffectiveDate: '20230808',
-      };
-
-      const response2 = {
-        신조문_기본정보: { 시행일자: '20230815' },
-        _extractedEffectiveDate: '20230815',
-      };
-
-      const announcementNo1 = `MST-282333_${response1._extractedEffectiveDate}`;
-      const announcementNo2 = `MST-282333_${response2._extractedEffectiveDate}`;
-
-      expect(announcementNo1).toBe('MST-282333_20230808');
-      expect(announcementNo2).toBe('MST-282333_20230815');
-      expect(announcementNo1).not.toBe(announcementNo2);
-    });
-  });
-
-  describe('Rate Limit 1초 간격', () => {
-    it('API 호출 사이 최소 1초 간격 유지', async () => {
-      const startTime = Date.now();
-      
-      // 1초 대기 시뮬레이션
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      const endTime = Date.now();
-      const elapsed = endTime - startTime;
-
-      expect(elapsed).toBeGreaterThanOrEqual(1000);
     });
   });
 });

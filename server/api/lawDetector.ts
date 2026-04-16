@@ -1,10 +1,10 @@
 /**
  * 법령 개정 감시 엔진
  * 
- * 1. 날짜별 법령 개정 이력 조회 (lsHstInf)
- * 2. 감시 대상 법령 필터링
- * 3. 신구법 비교 데이터 조회 (oldAndNew)
- * 4. 행정규칙 조회 (admrul)
+ * 1. oldAndNew API만 호출 (개별 MST)
+ * 2. 한글 시행일자 필드 우선 읽기
+ * 3. 시행일자가 20230415 이후인 것만 DB 저장
+ * 4. Rate Limit 1초 간격 유지
  */
 
 import { lawAPIClient } from './lawClient';
@@ -23,22 +23,30 @@ function formatDateForAPI(date: Date): string {
 }
 
 /**
- * 날짜 범위 생성 (시작일부터 종료일까지 매일)
+ * 시행일자가 기준일 이후인지 확인
+ * @param effectiveDateStr - YYYYMMDD 형식의 시행일자
+ * @param baseDate - 기준일 (기본값: 2023-04-15)
  */
-function getDateRange(startDate: Date, endDate: Date): string[] {
-  const dates: string[] = [];
-  const current = new Date(startDate);
-
-  while (current <= endDate) {
-    dates.push(formatDateForAPI(current));
-    current.setDate(current.getDate() + 1);
+function isEffectiveDateAfter(effectiveDateStr: string, baseDate: string = '20230415'): boolean {
+  if (!effectiveDateStr || effectiveDateStr.length !== 8) {
+    console.warn(`[DateFilter] ⚠️  Invalid date format: ${effectiveDateStr}`);
+    return false;
   }
-
-  return dates;
+  
+  const numericDate = parseInt(effectiveDateStr);
+  const numericBase = parseInt(baseDate);
+  
+  return numericDate >= numericBase;
 }
 
 /**
  * 법령 개정 감시 (법령 + 행정규칙)
+ * 
+ * 변경된 로직:
+ * 1. oldAndNew API만 호출 (각 법령 MST마다 1회)
+ * 2. 한글 시행일자 필드 우선 읽기
+ * 3. 시행일자 >= 20230415인 것만 저장
+ * 4. 1초 간격 유지
  */
 export async function detectAndCollectLawChanges(
   itemId: number,
@@ -52,19 +60,18 @@ export async function detectAndCollectLawChanges(
   try {
     console.log(`[Law] 🔍 Processing: ${lawName} (MST: ${externalId})`);
 
-    // 3년 범위 계산
-    const today = new Date();
-    const threeYearsAgo = new Date(today.getFullYear() - 3, today.getMonth(), today.getDate());
-    const regDt = formatDateForAPI(threeYearsAgo);
-
-    console.log(`[Law] 📅 Date range: ${regDt} ~ ${formatDateForAPI(today)} (3 years)`);
-
     // 법령 vs 행정규칙 분기
     if (lawName.includes('고시')) {
       // === 행정규칙(고시) 처리 ===
       console.log(`[Law] 📋 Processing as ADMIN RULE (고시): ${lawName}`);
       
-      const adminRuleResponse = await lawAPIClient.getAdminRulesByDateRange(regDt, formatDateForAPI(today));
+      // 3년 범위 계산
+      const today = new Date();
+      const threeYearsAgo = new Date(today.getFullYear() - 3, today.getMonth(), today.getDate());
+      const startDate = formatDateForAPI(threeYearsAgo);
+      const endDate = formatDateForAPI(today);
+
+      const adminRuleResponse = await lawAPIClient.getAdminRulesByDateRange(startDate, endDate);
 
       if (!adminRuleResponse || !adminRuleResponse.data) {
         console.warn(`[Law] ⚠️  No admin rules found for ${lawName}`);
@@ -94,28 +101,7 @@ export async function detectAndCollectLawChanges(
       // === 법령(법률, 령, 규칙) 처리 ===
       console.log(`[Law] 📋 Processing as LAW (법령): ${lawName}`);
 
-      // 1단계: lsHstInf API로 최근 3년 내 실제 개정 이력 확인
-      console.log(`[Law] 🔍 Step 1: Checking actual change history using lsHstInf API...`);
-      const changeHistoryResponse = await lawAPIClient.getLawChangeHistoryByDate(regDt);
-      const changeHistories = Array.isArray(changeHistoryResponse?.data) ? changeHistoryResponse.data : [];
-      console.log(`[Law] ✅ Found ${changeHistories.length} change histories in last 3 years`);
-      
-      // 2단계: 변경 이력에서 현재 MST와 일치하는 항목 찾기
-      const matchingHistory = changeHistories.find((history: any) => {
-        const historyMst = String(history.법령ID || history.MST || '');
-        const currentMst = String(externalId);
-        return historyMst === currentMst;
-      });
-      
-      if (!matchingHistory) {
-        console.warn(`[Law] ⚠️  No actual change history found for MST ${externalId} in last 3 years`);
-        return { detected: 0, collected: 0, errors: [`No change history found for ${lawName}`] };
-      }
-      
-      console.log(`[Law] 📌 Found matching change history: ${matchingHistory.법령명}`);
-      detected++;
-      
-      // 3단계: 신구법 비교 조회 (직접 MST 사용)
+      // oldAndNew API 호출 (직접 MST 사용)
       const comparisonResponse = await lawAPIClient.getLawComparison(externalId);
 
       if (comparisonResponse) {
@@ -123,26 +109,34 @@ export async function detectAndCollectLawChanges(
         
         // DB에 변경 로그 저장
         try {
-          // API 응답에서 시행일자 추출 (efYd 또는 시행일자 필드)
+          // 한글 시행일자 필드 추출 (우선순위)
           let effectiveDate = new Date();
-          let efYdStr = formatDateForAPI(new Date()); // 기본값: 오늘 날짜 (YYYYMMDD)
+          let efYdStr = formatDateForAPI(new Date()); // 기본값: 오늘 날짜
           
           const extractedDate = comparisonResponse?._extractedEffectiveDate;
           if (extractedDate && String(extractedDate).length === 8) {
             efYdStr = String(extractedDate);
+            
+            // 시행일자 필터링: 20230415 이후인 것만 저장
+            if (!isEffectiveDateAfter(efYdStr)) {
+              console.log(`[Law] ⏭️  Skipping: effective date ${efYdStr} is before 20230415`);
+              return { detected: 1, collected: 0, errors };
+            }
+            
             const year = parseInt(efYdStr.substring(0, 4));
             const month = parseInt(efYdStr.substring(4, 6));
             const day = parseInt(efYdStr.substring(6, 8));
             effectiveDate = new Date(year, month - 1, day);
-            console.log(`[Law] 📅 Using extracted effective date: ${efYdStr}`);
+            console.log(`[Law] 📅 Using effective date: ${efYdStr}`);
           } else {
-            console.warn(`[Law] ⚠️  No valid effective date found, using current date`);
-            efYdStr = formatDateForAPI(new Date());
+            console.warn(`[Law] ⚠️  No valid effective date found, SKIPPING this record`);
+            return { detected: 1, collected: 0, errors: ['No valid effective date'] };
           }
           
           // announcementNo: MST-{externalId}_{efYd} (고유성 보장)
           const announcementNo = `MST-${externalId}_${efYdStr}`;
           console.log(`[DB Save] Saving to DB - announcementNo: ${announcementNo}, effectiveDate: ${effectiveDate.toISOString()}`);
+          
           await upsertChangeLog({
             itemId,
             announcementNo,
@@ -151,6 +145,7 @@ export async function detectAndCollectLawChanges(
             comparisonData: comparisonResponse,
             rawData: comparisonResponse,
           });
+          
           collected++;
           console.log(`[Law] ✅ Saved law comparison for MST: ${externalId}, effectiveDate: ${effectiveDate.toISOString()}`);
         } catch (saveError) {

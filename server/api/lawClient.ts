@@ -6,7 +6,8 @@
  * 2. 신구법 비교: target=oldAndNew (상세 조회)
  * 3. 행정규칙: target=admrul (prmlYd 파라미터)
  * 
- * Rate Limiting: 2개씩, 1.5초 간격
+ * Rate Limiting: 1개씩, 1초 간격 (0.5초 * 2개 = 1초)
+ * 재시도: 지수 백오프 (1초, 2초)
  */
 
 import axios, { AxiosInstance } from 'axios';
@@ -15,86 +16,68 @@ const LAW_API_BASE_URL = 'http://www.law.go.kr/DRF';
 const OC_ID = 'mkd1434';
 
 /**
- * Rate Limiter: 지정된 개수씩 순차 처리, 일정 간격 유지
+ * Rate Limiter: 1개씩 순차 처리, 최소 1초 간격 유지
  */
 class RateLimiter {
   private lastRequestTime = 0;
-  private requestCount = 0;
 
-  constructor(
-    private delayMs: number = 1500, // 1.5초
-    private batchSize: number = 2   // 2개씩
-  ) {}
+  constructor(private delayMs: number = 1000) {} // 1초
 
   async wait(): Promise<void> {
-    this.requestCount++;
+    const now = Date.now();
+    const timeSinceLastRequest = now - this.lastRequestTime;
 
-    // batchSize마다 지연 적용
-    if (this.requestCount % this.batchSize === 0) {
-      const now = Date.now();
-      const timeSinceLastDelay = now - this.lastRequestTime;
-
-      if (timeSinceLastDelay < this.delayMs) {
-        const waitTime = this.delayMs - timeSinceLastDelay;
-        console.log(`[RateLimiter] Batch ${Math.ceil(this.requestCount / this.batchSize)} - Waiting ${waitTime}ms...`);
-        await new Promise(resolve => setTimeout(resolve, waitTime));
-      }
-
-      this.lastRequestTime = Date.now();
+    if (timeSinceLastRequest < this.delayMs) {
+      const waitTime = this.delayMs - timeSinceLastRequest;
+      console.log(`[RateLimiter] ⏳ Waiting ${waitTime}ms before next request...`);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
     }
+
+    this.lastRequestTime = Date.now();
   }
 
   reset(): void {
-    this.requestCount = 0;
     this.lastRequestTime = 0;
   }
 }
 
 /**
- * 자동 재시도 로직
+ * 재시도 로직 (지수 백오프 + ECONNRESET 처리)
  */
-async function withRetry<T>(
-  fn: () => Promise<T>,
-  maxRetries: number = 3,
-  delayMs: number = 1000
-): Promise<T> {
-  let lastError: Error | null = null;
-
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+const withRetry = async (fn: () => Promise<any>, maxRetries = 2): Promise<any> => {
+  for (let i = 0; i < maxRetries; i++) {
     try {
       return await fn();
-    } catch (error) {
-      lastError = error as Error;
-      console.warn(`[Retry] Attempt ${attempt}/${maxRetries} failed: ${lastError.message}`);
+    } catch (error: any) {
+      const isLastAttempt = i === maxRetries - 1;
+      const errorMsg = error?.message || String(error);
+      const isNetworkError = errorMsg.includes('ECONNRESET') || errorMsg.includes('ETIMEDOUT') || errorMsg.includes('ENOTFOUND');
 
-      if (attempt < maxRetries) {
-        await new Promise(resolve => setTimeout(resolve, delayMs * attempt));
+      if (isNetworkError && !isLastAttempt) {
+        // 지수 백오프: 1초, 2초
+        const delayMs = Math.pow(2, i) * 1000;
+        console.warn(`[Retry] ⚠️  Network error (${errorMsg}), waiting ${delayMs}ms before retry... (attempt ${i + 1}/${maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      } else if (isLastAttempt) {
+        console.error(`[Retry] ❌ Failed after ${maxRetries} attempts: ${errorMsg}`);
+        return null; // 재시도 실패 시 null 반환 (무시)
+      } else {
+        throw error;
       }
     }
   }
+};
 
-  throw lastError || new Error('Max retries exceeded');
-}
-
-/**
- * 법령 API 클라이언트
- */
-class LawAPIClient {
+export class LawAPIClient {
   private client: AxiosInstance;
   private rateLimiter: RateLimiter;
 
   constructor() {
     this.client = axios.create({
       baseURL: LAW_API_BASE_URL,
-      timeout: 15000,
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'LawMonitoringSystem/1.0',
-      },
+      timeout: 10000,
     });
-
-    // Rate Limiter: 2개씩, 1.5초 간격
-    this.rateLimiter = new RateLimiter(1500, 2);
+    this.rateLimiter = new RateLimiter(1000); // 1초 간격
   }
 
   /**
@@ -117,12 +100,6 @@ class LawAPIClient {
         display: 100,
         page: 1,
       };
-
-      // 전체 요청 URL 출력
-      const fullUrl = `${LAW_API_BASE_URL}/lawSearch.do?${Object.entries(params)
-        .map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`)
-        .join('&')}`;
-      console.log(`[LawClient] 📡 Full Request URL (lsHstInf):\n${fullUrl}\n`);
 
       console.log(`[LawClient] 🔍 Fetching law change history for date: ${regDt}`);
       const response = await this.client.get('/lawSearch.do', { params });
@@ -161,12 +138,6 @@ class LawAPIClient {
         MST: mst,
       };
 
-      // 전체 요청 URL 출력
-      const fullUrl = `${LAW_API_BASE_URL}/lawService.do?${Object.entries(params)
-        .map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`)
-        .join('&')}`;
-      console.log(`[LawClient] 📡 Full Request URL (oldAndNew):\n${fullUrl}\n`);
-
       console.log(`[LawClient] 🔍 Fetching law comparison for MST: ${mst}`);
       const response = await this.client.get('/lawService.do', { params });
 
@@ -180,21 +151,26 @@ class LawAPIClient {
         return null;
       }
 
-      console.log(`[LawClient] ✅ Response for MST ${mst}: ${JSON.stringify(response.data).substring(0, 100)}`);
+      console.log(`[LawClient] ✅ Response for MST ${mst}: received`);
       
-      // === 시행일자 추출 로직 ===
+      // === 한글 시행일자 필드 추출 (우선순위) ===
       const extractEffectiveDate = (data: any): string | null => {
-        // 1. efYd 찾기
-        if (data?.efYd) return String(data.efYd);
-        if (data?.기본정보?.efYd) return String(data.기본정보.efYd);
-        if (data?.신조문목록?.[0]?.efYd) return String(data.신조문목록[0].efYd);
-        if (data?.oldAndNew?.efYd) return String(data.oldAndNew.efYd);
-        if (data?.oldAndNew?.기본정보?.efYd) return String(data.oldAndNew.기본정보.efYd);
+        // 1. 한글 시행일자 필드 (최우선)
+        if (data?.신조문_기본정보?.시행일자) {
+          const date = String(data.신조문_기본정보.시행일자);
+          if (date.length === 8) return date;
+        }
+        if (data?.구조문_기본정보?.시행일자) {
+          const date = String(data.구조문_기본정보.시행일자);
+          if (date.length === 8) return date;
+        }
         
-        // 2. 시행일자 찾기 (한글 키값)
-        if (data?.oldAndNew?.신조문_기본정보?.시행일자) return String(data.oldAndNew.신조문_기본정보.시행일자);
-        if (data?.신조문_기본정보?.시행일자) return String(data.신조문_기본정보.시행일자);
-        if (data?.기본정보?.시행일자) return String(data.기본정보.시행일자);
+        // 2. efYd 필드
+        if (data?.efYd && String(data.efYd).length === 8) return String(data.efYd);
+        if (data?.oldAndNew?.신조문_기본정보?.시행일자) {
+          const date = String(data.oldAndNew.신조문_기본정보.시행일자);
+          if (date.length === 8) return date;
+        }
         
         return null;
       };
@@ -203,6 +179,8 @@ class LawAPIClient {
       if (extractedDate) {
         console.log(`[LawClient] 📅 Extracted effective date: ${extractedDate}`);
         response.data._extractedEffectiveDate = extractedDate;
+      } else {
+        console.warn(`[LawClient] ⚠️  No valid effective date found in response`);
       }
       
       return response.data;
@@ -223,19 +201,13 @@ class LawAPIClient {
       await this.rateLimiter.wait();
 
       const params = {
-        target: 'admrul',  // 행정규칙(고시)
+        target: 'admrul',
         OC: OC_ID,
         type: 'JSON',
-        prmlYd: `${startDate}~${endDate}`,  // 발령일자 범위
+        prmlYd: `${startDate}~${endDate}`,
         display: 100,
         page: 1,
       };
-
-      // 전체 요청 URL 출력
-      const fullUrl = `${LAW_API_BASE_URL}/lawSearch.do?${Object.entries(params)
-        .map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`)
-        .join('&')}`;
-      console.log(`[LawClient] 📡 Full Request URL (admrul):\n${fullUrl}\n`);
 
       console.log(`[LawClient] 🔍 Fetching admin rules for date range: ${startDate} ~ ${endDate}`);
       const response = await this.client.get('/lawSearch.do', { params });
@@ -256,44 +228,38 @@ class LawAPIClient {
   }
 
   /**
-   * 4. 행정규칙 신구규칙 비교 (행정규칙 전용)
-   * target=admrulOldAndNew를 사용하여 특정 고시의 신구규칙 비교
+   * 4. 행정규칙 신구법 비교 조회
+   * target=admrulOldAndNew를 사용하여 특정 행정규칙의 신구법 비교 데이터 조회
    * 
-   * API: http://www.law.go.kr/DRF/lawService.do?target=admrulOldAndNew&LID=[번호]&OC=[인증키]&type=JSON
+   * API: http://www.law.go.kr/DRF/lawService.do?target=admrulOldAndNew&ID=[ID]&OC=[인증키]&type=JSON
    * 
-   * @param lid - 행정규칙 LID 코드
+   * @param lid - 행정규칙 LID
    */
   async getAdminRuleComparison(lid: string): Promise<any> {
     return withRetry(async () => {
       await this.rateLimiter.wait();
 
       const params = {
-        target: 'admrulOldAndNew',  // 행정규칙 신구규칙 비교
+        target: 'admrulOldAndNew',
         OC: OC_ID,
         type: 'JSON',
         LID: lid,
       };
 
-      // 전체 요청 URL 출력
-      const fullUrl = `${LAW_API_BASE_URL}/lawService.do?${Object.entries(params)
-        .map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`)
-        .join('&')}`;
-      console.log(`[LawClient] 📡 Full Request URL (admrulOldAndNew):\n${fullUrl}\n`);
-
       console.log(`[LawClient] 🔍 Fetching admin rule comparison for LID: ${lid}`);
       const response = await this.client.get('/lawService.do', { params });
 
       if (!response.data) {
-        console.warn(`[LawClient] ⚠️  Empty response for LID: ${lid}`);
+        console.warn(`[LawClient] ⚠️  Empty response for admin rule LID: ${lid}`);
         return null;
       }
 
       if (response.data.error) {
-        console.error(`[LawClient] ❌ API Error for LID ${lid}:`, response.data.error);
+        console.error(`[LawClient] ❌ API Error for admin rule ${lid}:`, response.data.error);
         return null;
       }
 
-      console.log(`[LawClient] ✅ Response for LID ${lid}: ${JSON.stringify(response.data).substring(0, 100)}`);
+      console.log(`[LawClient] ✅ Response for admin rule ${lid}: received`);
       return response.data;
     });
   }

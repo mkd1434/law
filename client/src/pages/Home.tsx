@@ -75,25 +75,43 @@ export default function Home() {
     const threeYearsAgo = new Date(now.getTime() - 3 * 365 * 24 * 60 * 60 * 1000); // 3년 날짜
 
     // 모니터링 대상 ID 목록 (선택된 타입)
-    const monitoredItemIds = new Set(monitoredItems.map((item: any) => item.id));
+    const monitoredItemIds = new Set(
+      monitoredItems
+        .map((item: any) => Number(item.id))
+        .filter((id: number) => Number.isFinite(id))
+    );
 
     // 필터링: 3년 이내 + 선택된 타입 + 검색어
     const filtered = allChangeLogs.filter((log: any) => {
-      const effectiveDate = new Date(log.effectiveDate);
-      const isWithinThreeYears = effectiveDate >= threeYearsAgo;
-      const isMonitored = monitoredItemIds.has(log.itemId);
+      const effectiveDate = log.effectiveDate instanceof Date
+        ? log.effectiveDate
+        : new Date(log.effectiveDate);
+      const effectiveTime = effectiveDate.getTime();
+      const isWithinThreeYears = Number.isFinite(effectiveTime) && effectiveTime >= threeYearsAgo.getTime();
+      const logItemId = Number(log.itemId);
+      const isMonitored = Number.isFinite(logItemId) && monitoredItemIds.has(logItemId);
       const matchesSearch = !searchQuery || 
         log.announcementNo?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         log.lawName?.toLowerCase().includes(searchQuery.toLowerCase());
       return isWithinThreeYears && isMonitored && matchesSearch;
     });
 
+    if (process.env.NODE_ENV === 'development') {
+      console.info('[Home] Filter stats', {
+        selectedTab,
+        monitoredCount: monitoredItems.length,
+        monitoredIdSample: Array.from(monitoredItemIds).slice(0, 5),
+        totalLogs: allChangeLogs.length,
+        filteredLogs: filtered.length,
+      });
+    }
+
     // 상태별 분류
     return {
       current: filtered.filter((log: any) => log.status === 'current'),
       upcoming: filtered.filter((log: any) => log.status === 'upcoming'),
     };
-  }, [allChangeLogs, monitoredItems, searchQuery]);
+  }, [allChangeLogs, monitoredItems, searchQuery, selectedTab]);
 
   // 통계 카드 클릭 핸들러
   const handleStatCardClick = (section: ActiveSection) => {

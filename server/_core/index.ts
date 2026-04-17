@@ -31,7 +31,10 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 
 async function startServer() {
   // 초기 Seed 데이터 로드 (비동기, 에러는 무시)
-  await initializeSeedData();
+  await initializeSeedData({
+    targetCount: 20,
+    fixedRuleName: '전기안전관리자의 직무에 관한 고시',
+  });
 
   // 서버 시작 시 동기화 작업 강제 실행 (비동기, 에러 발생해도 서버는 정상 시작)
   console.log('[Server] 🚀 Starting monitoring sync job...');

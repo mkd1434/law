@@ -13,6 +13,7 @@ import fs from 'fs';
 import path from 'path';
 import { getDb } from '../db';
 import { monitoredItems } from '../../drizzle/schema';
+import { eq } from 'drizzle-orm';
 
 interface LawRecord {
   순번: string;
@@ -28,6 +29,11 @@ interface LawRecord {
   법령구분명: string;
   법령분야코드: string;
   법령분야명: string;
+}
+
+interface SeedOptions {
+  targetCount?: number;
+  fixedRuleName?: string;
 }
 
 /**
@@ -110,7 +116,7 @@ function parseCSV(filePath: string): LawRecord[] {
 /**
  * 초기 Seed 데이터 로드
  */
-export async function initializeSeedData(): Promise<void> {
+export async function initializeSeedData(options: SeedOptions = {}): Promise<void> {
   try {
     const db = await getDb();
     if (!db) {
@@ -128,35 +134,108 @@ export async function initializeSeedData(): Promise<void> {
       return;
     }
 
-    // 기존 데이터 무시하고 무조건 재긁기
-    console.log('[InitSeed] 🔄 모든 데이터를 무조건 다시 긁어옵니다 (중복 체크 제거)');
+    const targetCount = options.targetCount ?? 20;
+    const TARGET_RULE_NAME = options.fixedRuleName ?? '전기안전관리자의 직무에 관한 고시';
+    const lawRecords = records.filter((record) => determineType(record.법령명.trim()) === 'law');
+    const targetRule = records.find((record) => record.법령명.trim() === TARGET_RULE_NAME);
+    const targetRecords: LawRecord[] = [
+      ...lawRecords.slice(0, Math.max(targetCount - 1, 0)),
+      ...(targetRule ? [targetRule] : []),
+    ];
 
-    // 새로운 데이터 삽입 (중복 체크 없음)
+    if (!targetRule) {
+      console.warn(`[InitSeed] ⚠️ 지정된 행정규칙("${TARGET_RULE_NAME}")을 CSV에서 찾지 못했습니다.`);
+    }
+
+    const existingItems = await db.select().from(monitoredItems);
+    console.log(`[InitSeed] 📊 existing monitored item count: ${existingItems.length}`);
+    const shouldRestrictToUpsertOnly = existingItems.length >= targetCount;
+    if (shouldRestrictToUpsertOnly) {
+      console.log(`[InitSeed] 🔒 기존 항목이 ${targetCount}개 이상이라 신규 난삽입 없이 Upsert 중심으로 동작합니다.`);
+    }
+
+    // 이름 중복 제거 후 최신 1개만 유지하여 과증식(80+)을 원복
+    const groupedByName = new Map<string, any[]>();
+    for (const item of existingItems) {
+      const name = (item.name || '').trim();
+      const list = groupedByName.get(name) || [];
+      list.push(item);
+      groupedByName.set(name, list);
+    }
+
+    const duplicateDeleteIds: number[] = [];
+    for (const [, sameNameItems] of groupedByName) {
+      const sorted = [...sameNameItems].sort((a, b) => a.id - b.id);
+      duplicateDeleteIds.push(...sorted.slice(1).map((item) => item.id));
+    }
+    for (const id of duplicateDeleteIds) {
+      await db.delete(monitoredItems).where(eq(monitoredItems.id, id));
+    }
+    if (duplicateDeleteIds.length > 0) {
+      console.log(`[InitSeed] 🧹 중복 항목 ${duplicateDeleteIds.length}개 삭제 완료`);
+    }
+
+    const refreshedItems = await db.select().from(monitoredItems);
+    const targetNameSet = new Set(targetRecords.map((record) => record.법령명.trim()));
+    const extraItems = refreshedItems.filter((item) => !targetNameSet.has((item.name || '').trim()));
+    for (const item of extraItems) {
+      await db.delete(monitoredItems).where(eq(monitoredItems.id, item.id));
+    }
+    if (extraItems.length > 0) {
+      console.log(`[InitSeed] 🧹 대상 외 항목 ${extraItems.length}개 삭제 (${targetCount}개 원복 정책)`);
+    }
+
+    const currentItems = await db.select().from(monitoredItems);
+    const existingByName = new Map<string, any>();
+    currentItems.forEach((item) => {
+      existingByName.set((item.name || '').trim(), item);
+    });
+
     let insertedCount = 0;
+    let updatedCount = 0;
 
-    for (const record of records) {
+    for (const record of targetRecords) {
       try {
         const lawName = record.법령명.trim();
         const lawMST = record.법령MST.trim();
         const lawType = determineType(lawName);  // lawName 기반 분류
 
-        // 삽입
+        const existing = existingByName.get(lawName);
+        if (existing) {
+          await db
+            .update(monitoredItems)
+            .set({
+              type: lawType,
+              isActive: 1,
+              externalId: lawMST,
+            })
+            .where(eq(monitoredItems.id, existing.id));
+          updatedCount++;
+          continue;
+        }
+
+        if (shouldRestrictToUpsertOnly && existingByName.size >= targetCount) {
+          console.log(`[InitSeed] ⏭️ 신규 삽입 스킵(${targetCount}개 제한): ${lawName}`);
+          continue;
+        }
+
         await db.insert(monitoredItems).values({
           name: lawName,
           type: lawType,
           isActive: 1,
           externalId: lawMST,
         });
-
         insertedCount++;
+        existingByName.set(lawName, { name: lawName });
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
         console.error(`[InitSeed] ❌ 오류: ${record.법령명} - ${errorMsg}`);
       }
     }
 
-    if (insertedCount > 0) {
-      console.log(`[InitSeed] ✅ Seed 데이터 로드 완료 (${insertedCount}개 추가/업데이트)`);
+    const finalItems = await db.select().from(monitoredItems);
+    if (insertedCount > 0 || updatedCount > 0) {
+      console.log(`[InitSeed] ✅ Seed 데이터 로드 완료 (inserted=${insertedCount}, updated=${updatedCount}, finalCount=${finalItems.length})`);
     } else {
       console.log('[InitSeed] ℹ️  추가할 데이터가 없습니다');
     }

@@ -65,6 +65,8 @@ export const changeLogs = mysqlTable("change_logs", {
   status: mysqlEnum("status", ["current", "upcoming"]).notNull(),
   /** 신구법 비교 데이터 (JSON 형식으로 저장) */
   comparisonData: json("comparison_data"),
+  /** 법령 조문 원문(HTML 포함) */
+  content: text("content"),
   /** 원문 데이터 (JSON 형식으로 저장) */
   rawData: json("raw_data"),
   /** 생성 일시 */

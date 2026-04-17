@@ -200,6 +200,7 @@ export const monitoringRouter = router({
         effectiveDate: z.date(),
         status: z.enum(['current', 'upcoming']),
         comparisonData: z.any().optional(),
+        content: z.string().optional(),
         rawData: z.any().optional(),
       })
     )
@@ -218,6 +219,7 @@ export const monitoringRouter = router({
           effectiveDate: input.effectiveDate,
           status: input.status,
           comparisonData: input.comparisonData,
+          content: input.content,
           rawData: input.rawData,
         });
 
@@ -241,6 +243,7 @@ export const monitoringRouter = router({
         id: z.number().min(1),
         status: z.enum(['current', 'upcoming']).optional(),
         comparisonData: z.any().optional(),
+        content: z.string().optional(),
       })
     )
     .mutation(async ({ input, ctx }) => {
@@ -255,6 +258,7 @@ export const monitoringRouter = router({
         const updates: any = {};
         if (input.status !== undefined) updates.status = input.status;
         if (input.comparisonData !== undefined) updates.comparisonData = input.comparisonData;
+        if (input.content !== undefined) updates.content = input.content;
 
         await updateChangeLog(input.id, updates);
         return { success: true, message: '변경 로그가 수정되었습니다' };

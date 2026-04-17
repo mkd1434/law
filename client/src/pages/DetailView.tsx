@@ -50,8 +50,25 @@ export default function DetailView() {
   }
 
   const comparisonData = changeLog.comparisonData || {};
-  const oldText = comparisonData.oldText || '데이터 없음';
-  const newText = comparisonData.newText || '데이터 없음';
+  const parseStoredContent = (rawContent: unknown): { oldHtml: string; newHtml: string } => {
+    if (!rawContent || typeof rawContent !== 'string') return { oldHtml: '', newHtml: '' };
+    try {
+      const parsed = JSON.parse(rawContent);
+      const oldHtml = typeof parsed?.구조문목록 === 'string'
+        ? parsed.구조문목록
+        : JSON.stringify(parsed?.구조문목록 ?? '', null, 2);
+      const newHtml = typeof parsed?.신조문목록 === 'string'
+        ? parsed.신조문목록
+        : JSON.stringify(parsed?.신조문목록 ?? '', null, 2);
+      return { oldHtml, newHtml };
+    } catch {
+      return { oldHtml: '', newHtml: '' };
+    }
+  };
+
+  const parsedContent = parseStoredContent(changeLog.content);
+  const oldText = parsedContent.oldHtml || comparisonData.oldText || '데이터 없음';
+  const newText = parsedContent.newHtml || comparisonData.newText || '데이터 없음';
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-white via-purple-50 to-cyan-50">
@@ -85,9 +102,11 @@ export default function DetailView() {
             </CardHeader>
             <CardContent>
               <div className="bg-white p-4 rounded border border-red-200 max-h-96 overflow-y-auto">
-                <pre className="text-sm text-gray-700 whitespace-pre-wrap font-mono">
-                  {typeof oldText === 'string' ? oldText : JSON.stringify(oldText, null, 2)}
-                </pre>
+                <div
+                  className="text-sm text-gray-700 whitespace-pre-wrap font-mono"
+                  // 법제처 원문(<P>, <신설> 등) 포맷을 그대로 렌더링
+                  dangerouslySetInnerHTML={{ __html: typeof oldText === 'string' ? oldText : JSON.stringify(oldText, null, 2) }}
+                />
               </div>
             </CardContent>
           </Card>
@@ -100,9 +119,10 @@ export default function DetailView() {
             </CardHeader>
             <CardContent>
               <div className="bg-white p-4 rounded border border-green-200 max-h-96 overflow-y-auto">
-                <pre className="text-sm text-gray-700 whitespace-pre-wrap font-mono">
-                  {typeof newText === 'string' ? newText : JSON.stringify(newText, null, 2)}
-                </pre>
+                <div
+                  className="text-sm text-gray-700 whitespace-pre-wrap font-mono"
+                  dangerouslySetInnerHTML={{ __html: typeof newText === 'string' ? newText : JSON.stringify(newText, null, 2) }}
+                />
               </div>
             </CardContent>
           </Card>

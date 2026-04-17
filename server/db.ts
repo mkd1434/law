@@ -183,6 +183,13 @@ export async function upsertChangeLog(log: InsertChangeLog) {
     // 새로운 데이터 삽입
     console.log(`[DB] ✨ Inserting new change log: ${log.announcementNo}`);
     console.log(`[DB] ✨ effectiveDate: ${log.effectiveDate?.toISOString()}`);
+    if (typeof (log as any).content === 'string') {
+      const content = (log as any).content as string;
+      console.log(`[DB] ✨ contentLength: ${content.length}`);
+      console.log(`[DB] ✨ contentPreview: ${content.slice(0, 300)}${content.length > 300 ? '...' : ''}`);
+    } else {
+      console.warn(`[DB] ⚠️ content field is missing or not a string for ${log.announcementNo}`);
+    }
     const result = await db.insert(changeLogs).values(log);
     console.log(`[DB] ✅ Successfully saved: ${log.announcementNo}`);
     return result;

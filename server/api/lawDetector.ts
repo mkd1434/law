@@ -97,6 +97,35 @@ function extractEffectiveDate(data: any): string | null {
   }
 }
 
+function toContentPayload(response: any): { content: string; oldText: string; newText: string } {
+  const oldAndNewService = response?.OldAndNewService ?? {};
+  const newArticles = oldAndNewService?.신조문목록 ?? null;
+  const oldArticles = oldAndNewService?.구조문목록 ?? null;
+
+  const payload = {
+    신조문목록: newArticles,
+    구조문목록: oldArticles,
+  };
+
+  // HTML 태그(<P>, <신설> 등) 보존을 위해 문자열 가공 없이 원본 JSON 직렬화
+  const content = JSON.stringify(payload);
+
+  const collectHtml = (node: any): string[] => {
+    if (node === null || node === undefined) return [];
+    if (typeof node === 'string') {
+      return node.includes('<') && node.includes('>') ? [node] : [];
+    }
+    if (Array.isArray(node)) return node.flatMap(collectHtml);
+    if (typeof node === 'object') return Object.values(node).flatMap(collectHtml);
+    return [];
+  };
+
+  const oldText = collectHtml(oldArticles).join('\n');
+  const newText = collectHtml(newArticles).join('\n');
+
+  return { content, oldText, newText };
+}
+
 /**
  * 법령 개정 감시 (법령 + 행정규칙)
  * 
@@ -184,18 +213,31 @@ export async function detectAndCollectLawChanges(
 
           // announcementNo: MST-{externalId}_{efYd} (고유성 보장)
           const announcementNo = `MST-${externalId}_${effectiveDateStr}`;
+          const { content, oldText, newText } = toContentPayload(comparisonResponse);
+          const hasContent = content !== '{}' && content.length > 2;
           
           console.log(`[DB Save] 💾 Saving to DB`);
           console.log(`  - announcementNo: ${announcementNo}`);
           console.log(`  - effectiveDate: ${effectiveDate.toISOString()}`);
           console.log(`  - itemId: ${itemId}`);
+          console.log(`  - contentLength: ${content.length}`);
+          console.log(`  - oldTextLength: ${oldText.length}, newTextLength: ${newText.length}`);
+          console.log(`  - contentPreview: ${content.slice(0, 300)}${content.length > 300 ? '...' : ''}`);
+          if (!hasContent) {
+            console.warn(`[DB Save] ⚠️ content 필드가 비어 있습니다. OldAndNewService 구조를 확인하세요.`);
+          }
           
           await upsertChangeLog({
             itemId,
             announcementNo,
             effectiveDate,
             status: 'current',
-            comparisonData: comparisonResponse,
+            comparisonData: {
+              ...comparisonResponse,
+              oldText,
+              newText,
+            },
+            content,
             rawData: comparisonResponse,
           });
           

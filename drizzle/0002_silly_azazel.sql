@@ -1,0 +1,1 @@
+ALTER TABLE `change_logs` ADD `content` text;

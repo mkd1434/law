@@ -34,21 +34,61 @@ function formatDateForAPI(date: Date): string {
  */
 function extractEffectiveDate(data: any): string | null {
   try {
-    // 1. 최우선 순위: 신조문_기본정보 내의 한글 '시행일자'
-    const newInfoDate = data?.OldAndNewService?.신조문_기본정보?.시행일자;
-    if (newInfoDate) return String(newInfoDate);
+    const normalizeDate = (value: unknown): string | null => {
+      if (value === null || value === undefined) return null;
+      const digitsOnly = String(value).replace(/\D/g, '');
+      return /^\d{8}$/.test(digitsOnly) ? digitsOnly : null;
+    };
 
-    // 2. 차선 순위: 구조문_기본정보 내의 '시행일자'
-    const oldInfoDate = data?.OldAndNewService?.구조문_기본정보?.시행일자;
-    if (oldInfoDate) return String(oldInfoDate);
+    // 1. 최우선 순위: OldAndNewService.신조문_기본정보.시행일자
+    const prioritizedDate = normalizeDate(data?.OldAndNewService?.신조문_기본정보?.시행일자);
+    if (prioritizedDate) return prioritizedDate;
 
-    // 3. 예비 순위: 기본정보 내의 '시행일자'
-    const baseInfoDate = data?.OldAndNewService?.기본정보?.시행일자;
-    if (baseInfoDate) return String(baseInfoDate);
+    // 2. 차선/예비 순위
+    const fallbackCandidates = [
+      data?.OldAndNewService?.구조문_기본정보?.시행일자,
+      data?.OldAndNewService?.기본정보?.시행일자,
+      data?.OldAndNewService?.신조문_기본정보?.efYd,
+      data?.efYd,
+    ];
+    for (const candidate of fallbackCandidates) {
+      const normalized = normalizeDate(candidate);
+      if (normalized) return normalized;
+    }
 
-    // 4. 마지막 보루: 영문 키값 'efYd'
-    const engDate = data?.OldAndNewService?.신조문_기본정보?.efYd;
-    if (engDate) return String(engDate);
+    // 3. 전체 응답에서 한글 키값 '시행일자'를 재귀 탐색
+    const visited = new Set<any>();
+    const collectEffectiveDates = (node: any): string[] => {
+      if (!node || typeof node !== 'object') return [];
+      if (visited.has(node)) return [];
+      visited.add(node);
+
+      const found: string[] = [];
+      if (Array.isArray(node)) {
+        for (const item of node) {
+          found.push(...collectEffectiveDates(item));
+        }
+        return found;
+      }
+
+      for (const [key, value] of Object.entries(node)) {
+        if (key === '시행일자') {
+          const normalized = normalizeDate(value);
+          if (normalized) found.push(normalized);
+        }
+
+        if (value && typeof value === 'object') {
+          found.push(...collectEffectiveDates(value));
+        }
+      }
+
+      return found;
+    };
+
+    const discoveredDates = collectEffectiveDates(data);
+    if (discoveredDates.length > 0) {
+      return discoveredDates[0];
+    }
 
     return null;
   } catch (e) {

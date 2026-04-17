@@ -96,6 +96,35 @@ describe('lawDetector - 강제 수정 (한글 시행일자 필드 완전 탐색)
       expect(callArgs.announcementNo).toBe('MST-282333_20230820');
     });
 
+    it('OldAndNewService 내부 임의 중첩 경로의 시행일자도 추출', async () => {
+      const mockResponse = {
+        OldAndNewService: {
+          신조문_기본정보: {},
+          기타정보: {
+            상세: {
+              시행일자: '20230901',
+            },
+          },
+        },
+      };
+
+      vi.spyOn(lawClient, 'lawAPIClient', 'get').mockReturnValue({
+        getLawComparison: vi.fn().mockResolvedValue(mockResponse),
+        getAdminRulesByDateRange: vi.fn(),
+        getAdminRuleComparison: vi.fn(),
+      } as any);
+
+      const mockUpsertChangeLog = vi.spyOn(db, 'upsertChangeLog').mockResolvedValue(undefined);
+
+      const result = await detectAndCollectLawChanges(1, '282333', '전기공사업법');
+
+      expect(result.collected).toBe(1);
+      expect(mockUpsertChangeLog).toHaveBeenCalledOnce();
+
+      const callArgs = mockUpsertChangeLog.mock.calls[0][0];
+      expect(callArgs.announcementNo).toBe('MST-282333_20230901');
+    });
+
     it('efYd 필드에서 추출 (마지막 보루)', async () => {
       const mockResponse = {
         OldAndNewService: {

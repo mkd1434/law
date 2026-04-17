@@ -155,23 +155,65 @@ export class LawAPIClient {
       
       // === 한글 시행일자 필드 추출 (우선순위) ===
       const extractEffectiveDate = (data: any): string | null => {
-        // 1. 한글 시행일자 필드 (최우선)
-        if (data?.신조문_기본정보?.시행일자) {
-          const date = String(data.신조문_기본정보.시행일자);
-          if (date.length === 8) return date;
+        const normalizeDate = (value: unknown): string | null => {
+          if (value === null || value === undefined) return null;
+          const digitsOnly = String(value).replace(/\D/g, '');
+          return /^\d{8}$/.test(digitsOnly) ? digitsOnly : null;
+        };
+
+        // 1. 최우선 순위
+        const prioritizedDate = normalizeDate(data?.OldAndNewService?.신조문_기본정보?.시행일자);
+        if (prioritizedDate) return prioritizedDate;
+
+        // 2. 기존 주요 경로 + 영문 키
+        const fallbackCandidates = [
+          data?.OldAndNewService?.구조문_기본정보?.시행일자,
+          data?.OldAndNewService?.기본정보?.시행일자,
+          data?.OldAndNewService?.신조문_기본정보?.efYd,
+          data?.신조문_기본정보?.시행일자,
+          data?.구조문_기본정보?.시행일자,
+          data?.oldAndNew?.신조문_기본정보?.시행일자,
+          data?.efYd,
+        ];
+        for (const candidate of fallbackCandidates) {
+          const normalized = normalizeDate(candidate);
+          if (normalized) return normalized;
         }
-        if (data?.구조문_기본정보?.시행일자) {
-          const date = String(data.구조문_기본정보.시행일자);
-          if (date.length === 8) return date;
+
+        // 3. 전체 응답에서 한글 키값 '시행일자'를 재귀 탐색
+        const visited = new Set<any>();
+        const collectEffectiveDates = (node: any): string[] => {
+          if (!node || typeof node !== 'object') return [];
+          if (visited.has(node)) return [];
+          visited.add(node);
+
+          const found: string[] = [];
+          if (Array.isArray(node)) {
+            for (const item of node) {
+              found.push(...collectEffectiveDates(item));
+            }
+            return found;
+          }
+
+          for (const [key, value] of Object.entries(node)) {
+            if (key === '시행일자') {
+              const normalized = normalizeDate(value);
+              if (normalized) found.push(normalized);
+            }
+
+            if (value && typeof value === 'object') {
+              found.push(...collectEffectiveDates(value));
+            }
+          }
+
+          return found;
+        };
+
+        const discoveredDates = collectEffectiveDates(data);
+        if (discoveredDates.length > 0) {
+          return discoveredDates[0];
         }
-        
-        // 2. efYd 필드
-        if (data?.efYd && String(data.efYd).length === 8) return String(data.efYd);
-        if (data?.oldAndNew?.신조문_기본정보?.시행일자) {
-          const date = String(data.oldAndNew.신조문_기본정보.시행일자);
-          if (date.length === 8) return date;
-        }
-        
+
         return null;
       };
       

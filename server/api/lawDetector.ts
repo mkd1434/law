@@ -24,81 +24,37 @@ function formatDateForAPI(date: Date): string {
 
 /**
  * 한글 시행일자 필드 완전 탐색
- * 모든 가능한 경로에서 시행일자를 찾음
+ * OldAndNewService 구조 내에서 시행일자를 찾음
  * 
  * 탐색 경로:
- * 1. OldAndNewService.신조문_기본정보.시행일자
- * 2. OldAndNewService.기본정보.시행일자
- * 3. OldAndNewService.신조문목록.조문[0].시행일자
- * 4. 공포일자 (fallback)
+ * 1. OldAndNewService.신조문_기본정보.시행일자 (최우선)
+ * 2. OldAndNewService.구조문_기본정보.시행일자
+ * 3. OldAndNewService.기본정보.시행일자
+ * 4. OldAndNewService.신조문_기본정보.efYd (영문)
  */
 function extractEffectiveDate(data: any): string | null {
-  if (!data) return null;
+  try {
+    // 1. 최우선 순위: 신조문_기본정보 내의 한글 '시행일자'
+    const newInfoDate = data?.OldAndNewService?.신조문_기본정보?.시행일자;
+    if (newInfoDate) return String(newInfoDate);
 
-  // 1. 신조문_기본정보.시행일자 (최우선)
-  if (data?.신조문_기본정보?.시행일자) {
-    const date = String(data.신조문_기본정보.시행일자);
-    if (date.length === 8 && /^\d{8}$/.test(date)) {
-      console.log(`[DateExtract] ✅ Found 신조문_기본정보.시행일자: ${date}`);
-      return date;
-    }
+    // 2. 차선 순위: 구조문_기본정보 내의 '시행일자'
+    const oldInfoDate = data?.OldAndNewService?.구조문_기본정보?.시행일자;
+    if (oldInfoDate) return String(oldInfoDate);
+
+    // 3. 예비 순위: 기본정보 내의 '시행일자'
+    const baseInfoDate = data?.OldAndNewService?.기본정보?.시행일자;
+    if (baseInfoDate) return String(baseInfoDate);
+
+    // 4. 마지막 보루: 영문 키값 'efYd'
+    const engDate = data?.OldAndNewService?.신조문_기본정보?.efYd;
+    if (engDate) return String(engDate);
+
+    return null;
+  } catch (e) {
+    console.error('[DateExtractError] 날짜 추출 중 사고 발생:', e);
+    return null;
   }
-
-  // 2. 기본정보.시행일자
-  if (data?.기본정보?.시행일자) {
-    const date = String(data.기본정보.시행일자);
-    if (date.length === 8 && /^\d{8}$/.test(date)) {
-      console.log(`[DateExtract] ✅ Found 기본정보.시행일자: ${date}`);
-      return date;
-    }
-  }
-
-  // 3. 구조문_기본정보.시행일자
-  if (data?.구조문_기본정보?.시행일자) {
-    const date = String(data.구조문_기본정보.시행일자);
-    if (date.length === 8 && /^\d{8}$/.test(date)) {
-      console.log(`[DateExtract] ✅ Found 구조문_기본정보.시행일자: ${date}`);
-      return date;
-    }
-  }
-
-  // 4. 신조문목록.조문[0].시행일자
-  if (Array.isArray(data?.신조문목록?.조문) && data.신조문목록.조문.length > 0) {
-    const date = String(data.신조문목록.조문[0].시행일자);
-    if (date && date.length === 8 && /^\d{8}$/.test(date)) {
-      console.log(`[DateExtract] ✅ Found 신조문목록.조문[0].시행일자: ${date}`);
-      return date;
-    }
-  }
-
-  // 5. efYd (영문 필드)
-  if (data?.efYd) {
-    const date = String(data.efYd);
-    if (date.length === 8 && /^\d{8}$/.test(date)) {
-      console.log(`[DateExtract] ✅ Found efYd: ${date}`);
-      return date;
-    }
-  }
-
-  // 6. 공포일자 (fallback)
-  if (data?.공포일자) {
-    const date = String(data.공포일자);
-    if (date.length === 8 && /^\d{8}$/.test(date)) {
-      console.log(`[DateExtract] ⚠️  Using fallback 공포일자: ${date}`);
-      return date;
-    }
-  }
-
-  // 7. 제정일자 (fallback)
-  if (data?.제정일자) {
-    const date = String(data.제정일자);
-    if (date.length === 8 && /^\d{8}$/.test(date)) {
-      console.log(`[DateExtract] ⚠️  Using fallback 제정일자: ${date}`);
-      return date;
-    }
-  }
-
-  return null;
 }
 
 /**

@@ -93,7 +93,7 @@ export async function runSyncJob(): Promise<void> {
 
       for (const rule of rules) {
         try {
-          const result = await detectAndCollectRuleChanges(rule.itemId, rule.ruleId, rule.name);
+          const result = await detectAndCollectRuleChanges(rule.itemId, rule.name);
           totalRuleDetected += result.detected;
           totalRuleCollected += result.collected;
           ruleErrors.push(...result.errors);

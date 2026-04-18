@@ -4,8 +4,7 @@
  */
 
 import { lawAPIClient } from './lawClient';
-import { addChangeLog, getLatestChangeLogForItem } from '../db';
-import { InsertChangeLog } from '../../drizzle/schema';
+import { addChangeLog, getLatestChangeLogForItem, type ChangeLogWritePayload } from '../db';
 
 /**
  * 행정규칙 변동 감지 및 수집
@@ -84,7 +83,7 @@ export async function detectAndCollectRuleChanges(
           const comparisonData = await lawAPIClient.getAdminRuleComparison(ruleLid);
 
           // Step 5: DB에 저장
-          const changeLog: InsertChangeLog = {
+          const changeLog: ChangeLogWritePayload = {
             itemId,
             announcementNo,
             effectiveDate,

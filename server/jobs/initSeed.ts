@@ -164,7 +164,7 @@ export async function initializeSeedData(options: SeedOptions = {}): Promise<voi
     }
 
     const duplicateDeleteIds: number[] = [];
-    for (const [, sameNameItems] of groupedByName) {
+    for (const sameNameItems of Array.from(groupedByName.values())) {
       const sorted = [...sameNameItems].sort((a, b) => a.id - b.id);
       duplicateDeleteIds.push(...sorted.slice(1).map((item) => item.id));
     }

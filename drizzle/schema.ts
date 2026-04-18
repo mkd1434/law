@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, json } from "drizzle-orm/mysql-core";
+import { int, longtext, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
 import { relations } from "drizzle-orm";
 
 /**
@@ -63,12 +63,12 @@ export const changeLogs = mysqlTable("change_logs", {
   effectiveDate: timestamp("effective_date").notNull(),
   /** 상태: 'current' (현행) 또는 'upcoming' (시행 예정) */
   status: mysqlEnum("status", ["current", "upcoming"]).notNull(),
-  /** 신구법 비교 데이터 (JSON 형식으로 저장) */
-  comparisonData: json("comparison_data"),
+  /** 신구법 비교 데이터 (대용량 JSON 문자열, LONGTEXT) */
+  comparisonData: longtext("comparison_data"),
   /** 법령 조문 원문(HTML 포함) */
-  content: text("content"),
-  /** 원문 데이터 (JSON 형식으로 저장) */
-  rawData: json("raw_data"),
+  content: longtext("content"),
+  /** 원문 데이터 (대용량 JSON 문자열, LONGTEXT) */
+  rawData: longtext("raw_data"),
   /** 생성 일시 */
   createdAt: timestamp("created_at").defaultNow().notNull(),
   /** 수정 일시 */

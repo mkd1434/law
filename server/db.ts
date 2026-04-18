@@ -3,6 +3,36 @@ import { drizzle } from "drizzle-orm/mysql2";
 import { InsertUser, users, monitoredItems, InsertMonitoredItem, changeLogs, InsertChangeLog } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
+/** INSERT 시 객체를 그대로 넣을 수 있게 comparisonData/rawData는 unknown 허용 */
+export type ChangeLogWritePayload = Omit<InsertChangeLog, "comparisonData" | "rawData"> & {
+  comparisonData?: unknown;
+  rawData?: unknown;
+};
+
+function serializeLongTextJsonField(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value === "string") return value;
+  return JSON.stringify(value);
+}
+
+function parseStoredJsonField(value: unknown): unknown {
+  if (value == null) return value;
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function mapChangeLogRow<T extends Record<string, unknown>>(row: T): T {
+  return {
+    ...row,
+    comparisonData: parseStoredJsonField(row.comparisonData),
+    rawData: parseStoredJsonField(row.rawData),
+  } as T;
+}
+
 let _db: ReturnType<typeof drizzle> | null = null;
 
 // Lazily create the drizzle instance so local tooling can run without a DB.
@@ -151,23 +181,29 @@ export async function getChangeLogs(filters?: { itemId?: number; status?: 'curre
   if (filters?.limit) {
     query = query.limit(filters.limit);
   }
-  return query.execute();
+  const rows = await query.execute();
+  return (rows as any[]).map((row) => mapChangeLogRow(row));
 }
 
 /**
  * 변경 로그 추가
  */
-export async function addChangeLog(log: InsertChangeLog) {
+export async function addChangeLog(log: ChangeLogWritePayload) {
   const db = await getDb();
   if (!db) throw new Error('Database not available');
-  return db.insert(changeLogs).values(log);
+  const row: InsertChangeLog = {
+    ...log,
+    comparisonData: serializeLongTextJsonField(log.comparisonData),
+    rawData: serializeLongTextJsonField(log.rawData),
+  };
+  return db.insert(changeLogs).values(row);
 }
 
 /**
  * 변경 로그 Upsert (이미 있으면 업데이트, 없으면 추가)
  * announcementNo 기반으로 중복 체크
  */
-export async function upsertChangeLog(log: InsertChangeLog) {
+export async function upsertChangeLog(log: ChangeLogWritePayload) {
   const db = await getDb();
   if (!db) throw new Error('Database not available');
   
@@ -175,6 +211,11 @@ export async function upsertChangeLog(log: InsertChangeLog) {
   console.log(`[DB] 🔄 Delete then Insert: ${log.announcementNo}`);
   
   try {
+    const row: InsertChangeLog = {
+      ...log,
+      comparisonData: serializeLongTextJsonField(log.comparisonData),
+      rawData: serializeLongTextJsonField(log.rawData),
+    };
     // 기존 데이터 삭제
     const deleteResult = await db.delete(changeLogs)
       .where(eq(changeLogs.announcementNo, log.announcementNo));
@@ -183,14 +224,14 @@ export async function upsertChangeLog(log: InsertChangeLog) {
     // 새로운 데이터 삽입
     console.log(`[DB] ✨ Inserting new change log: ${log.announcementNo}`);
     console.log(`[DB] ✨ effectiveDate: ${log.effectiveDate?.toISOString()}`);
-    if (typeof (log as any).content === 'string') {
-      const content = (log as any).content as string;
+    if (typeof row.content === 'string') {
+      const content = row.content;
       console.log(`[DB] ✨ contentLength: ${content.length}`);
       console.log(`[DB] ✨ contentPreview: ${content.slice(0, 300)}${content.length > 300 ? '...' : ''}`);
     } else {
       console.warn(`[DB] ⚠️ content field is missing or not a string for ${log.announcementNo}`);
     }
-    const result = await db.insert(changeLogs).values(log);
+    const result = await db.insert(changeLogs).values(row);
     console.log(`[DB] ✅ Successfully saved: ${log.announcementNo}`);
     return result;
   } catch (error) {
@@ -203,10 +244,18 @@ export async function upsertChangeLog(log: InsertChangeLog) {
 /**
  * 변경 로그 업데이트
  */
-export async function updateChangeLog(id: number, updates: Partial<InsertChangeLog>) {
+export async function updateChangeLog(id: number, updates: Partial<ChangeLogWritePayload>) {
   const db = await getDb();
   if (!db) throw new Error('Database not available');
-  return db.update(changeLogs).set(updates).where(eq(changeLogs.id, id));
+  const { comparisonData, rawData, ...rest } = updates;
+  const set: Partial<InsertChangeLog> = { ...rest };
+  if (comparisonData !== undefined) {
+    set.comparisonData = serializeLongTextJsonField(comparisonData) as InsertChangeLog["comparisonData"];
+  }
+  if (rawData !== undefined) {
+    set.rawData = serializeLongTextJsonField(rawData) as InsertChangeLog["rawData"];
+  }
+  return db.update(changeLogs).set(set).where(eq(changeLogs.id, id));
 }
 
 /**
@@ -221,7 +270,7 @@ export async function getLatestChangeLogForItem(itemId: number) {
     .where(eq(changeLogs.itemId, itemId))
     .orderBy(desc(changeLogs.effectiveDate))
     .limit(1);
-  return result.length > 0 ? result[0] : null;
+  return result.length > 0 ? mapChangeLogRow(result[0] as Record<string, unknown>) : null;
 }
 
 // TODO: add feature queries here as your schema grows.

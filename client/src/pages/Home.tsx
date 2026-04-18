@@ -41,6 +41,13 @@ export default function Home() {
     }
   );
 
+  /** 탭 필터용: change_logs.itemId → law | rule (타입 필터 없이 전체 모니터링 행) */
+  const { data: allMonitoredForTyping = [], isLoading: typingItemsLoading } =
+    trpc.monitoring.getMonitoredItems.useQuery(undefined, {
+      enabled: true,
+      retry: false,
+    });
+
   // 변경 로그 조회 (로그인 불필요 - 항상 활성화)
   // 에러 무시하고 빈 배열 반환 (Graceful Degradation)
   const { data: allChangeLogs = [], isLoading: logsLoading, error: logsError } = trpc.monitoring.getChangeLogs.useQuery(
@@ -51,7 +58,19 @@ export default function Home() {
     }
   );
 
-  const isLoading = itemsLoading || logsLoading;
+  const isLoading = itemsLoading || logsLoading || typingItemsLoading;
+
+  const itemTypeById = useMemo(() => {
+    const m = new Map<number, 'law' | 'rule'>();
+    for (const item of allMonitoredForTyping) {
+      const id = Number((item as { id?: unknown }).id);
+      const t = (item as { type?: unknown }).type;
+      if (Number.isFinite(id) && (t === 'law' || t === 'rule')) {
+        m.set(id, t);
+      }
+    }
+    return m;
+  }, [allMonitoredForTyping]);
 
   // 에러 로깅 (디버깅용)
   if (itemsError) {
@@ -69,31 +88,29 @@ export default function Home() {
    * - 검색: 공고번호 또는 법령명으로 검색
    */
   const filteredChangeLogs = useMemo(() => {
-    if (!allChangeLogs || !monitoredItems) return { current: [], upcoming: [] };
+    if (!Array.isArray(allChangeLogs)) return { current: [], upcoming: [] };
 
     const now = new Date();
     const threeYearsAgo = new Date(now.getTime() - 3 * 365 * 24 * 60 * 60 * 1000); // 3년 날짜
 
-    const monitoredItemIds = new Set(
-      monitoredItems
-        .map((item: any) => Number(item.id))
-        .filter((id: number) => Number.isFinite(id))
-    );
-
     // 필터링: 3년 이내 + 법령/규칙 탭 + 검색어
-    // monitoredType은 서버에서 monitored_items와 매칭해 붙임(id 타입 불일치 방지).
+    // monitoredType이 비어 있으면 전체 모니터링 목록으로 itemId → 타입 복원.
     const filtered = allChangeLogs.filter((log: any) => {
       const effectiveDate = log.effectiveDate instanceof Date
         ? log.effectiveDate
-        : new Date(log.effectiveDate);
+        : new Date(log.effectiveDate as string | number);
       const effectiveTime = effectiveDate.getTime();
-      const isWithinThreeYears = Number.isFinite(effectiveTime) && effectiveTime >= threeYearsAgo.getTime();
+      const isWithinThreeYears =
+        !Number.isFinite(effectiveTime) || effectiveTime >= threeYearsAgo.getTime();
       const logItemId = Number(log.itemId);
-      const matchesTab =
-        log.monitoredType === selectedTab ||
-        (log.monitoredType == null &&
-          Number.isFinite(logItemId) &&
-          monitoredItemIds.has(logItemId));
+      const fromServer = log.monitoredType;
+      const resolvedType: 'law' | 'rule' | null =
+        fromServer === 'law' || fromServer === 'rule'
+          ? fromServer
+          : Number.isFinite(logItemId)
+            ? itemTypeById.get(logItemId) ?? null
+            : null;
+      const matchesTab = resolvedType === selectedTab;
       const matchesSearch = !searchQuery ||
         log.announcementNo?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         log.lawName?.toLowerCase().includes(searchQuery.toLowerCase());
@@ -104,7 +121,7 @@ export default function Home() {
       console.info('[Home] Filter stats', {
         selectedTab,
         monitoredCount: monitoredItems.length,
-        monitoredIdSample: Array.from(monitoredItemIds).slice(0, 5),
+        itemTypeMapSize: itemTypeById.size,
         totalLogs: allChangeLogs.length,
         filteredLogs: filtered.length,
       });
@@ -115,7 +132,14 @@ export default function Home() {
       current: filtered.filter((log: any) => log.status === 'current'),
       upcoming: filtered.filter((log: any) => log.status === 'upcoming'),
     };
-  }, [allChangeLogs, monitoredItems, searchQuery, selectedTab]);
+  }, [allChangeLogs, monitoredItems, searchQuery, selectedTab, itemTypeById]);
+
+  const recentChangesEmptyMessage =
+    searchQuery
+      ? '검색 결과가 없습니다.'
+      : allChangeLogs.length === 0
+        ? '저장된 변경 로그가 없습니다. DB 연결·동기화 작업을 확인해 주세요.'
+        : `조건에 맞는 개정이 없습니다. (저장된 로그 ${allChangeLogs.length}건 — 현재 탭·최근 3년·시행일 기준)`;
 
   // 통계 카드 클릭 핸들러
   const handleStatCardClick = (section: ActiveSection) => {
@@ -299,7 +323,7 @@ export default function Home() {
                     </div>
                   ) : (
                     <p className="text-gray-500 text-center py-8">
-                      {searchQuery ? '검색 결과가 없습니다.' : '최근 3년 이내 개정 사항이 없습니다.'}
+                      {recentChangesEmptyMessage}
                     </p>
                   )}
                 </CardContent>
@@ -496,7 +520,7 @@ export default function Home() {
                     </div>
                   ) : (
                     <p className="text-gray-500 text-center py-8">
-                      {searchQuery ? '검색 결과가 없습니다.' : '최근 3년 이내 개정 사항이 없습니다.'}
+                      {recentChangesEmptyMessage}
                     </p>
                   )}
                 </CardContent>

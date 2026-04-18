@@ -10,7 +10,9 @@
  * Rate Limiting: 요청 간 최소 1초
  */
 
-import axios, { AxiosInstance } from 'axios';
+import http from "node:http";
+import https from "node:https";
+import axios, { AxiosInstance } from "axios";
 import {
   normalizeAdmrulList,
   normalizeLsHstInfList,
@@ -18,8 +20,13 @@ import {
   readLsHstInfTotalCnt,
 } from './lawApiNormalize';
 
-const LAW_API_BASE_URL = 'http://www.law.go.kr/DRF';
-const OC_ID = 'mkd1434';
+/** 명세 예시는 http이나, 리다이렉트/게이트웨이에서 첫 연결이 ECONNRESET 나는 경우가 있어 https 기본값 */
+const LAW_API_BASE_URL =
+  process.env.LAW_API_BASE_URL?.trim() || "https://www.law.go.kr/DRF";
+const OC_ID = "mkd1434";
+
+const DEFAULT_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 class RateLimiter {
   private lastRequestTime = 0;
@@ -44,18 +51,24 @@ class RateLimiter {
   }
 }
 
-const withRetry = async (fn: () => Promise<any>, maxRetries = 2): Promise<any> => {
+const withRetry = async (fn: () => Promise<any>, maxRetries = 4): Promise<any> => {
   for (let i = 0; i < maxRetries; i++) {
     try {
       return await fn();
     } catch (error: any) {
       const isLastAttempt = i === maxRetries - 1;
       const errorMsg = error?.message || String(error);
+      const causeCode = error?.cause?.code ?? error?.code;
       const isNetworkError =
-        errorMsg.includes('ECONNRESET') || errorMsg.includes('ETIMEDOUT') || errorMsg.includes('ENOTFOUND');
+        errorMsg.includes("ECONNRESET") ||
+        errorMsg.includes("ECONNREFUSED") ||
+        errorMsg.includes("ETIMEDOUT") ||
+        errorMsg.includes("ENOTFOUND") ||
+        errorMsg.includes("EPIPE") ||
+        causeCode === "ECONNRESET";
 
       if (isNetworkError && !isLastAttempt) {
-        const delayMs = Math.pow(2, i) * 1000;
+        const delayMs = Math.pow(2, i) * 1000 + Math.floor(Math.random() * 400);
         console.warn(
           `[Retry] ⚠️  Network error (${errorMsg}), waiting ${delayMs}ms before retry... (attempt ${i + 1}/${maxRetries})`
         );
@@ -79,11 +92,23 @@ export class LawAPIClient {
   private rateLimiter: RateLimiter;
 
   constructor() {
+    const httpsAgent = new https.Agent({ keepAlive: false, maxSockets: 8 });
+    const httpAgent = new http.Agent({ keepAlive: false, maxSockets: 8 });
     this.client = axios.create({
       baseURL: LAW_API_BASE_URL,
       timeout: 60000,
+      httpAgent,
+      httpsAgent,
+      headers: {
+        "User-Agent": process.env.LAW_API_USER_AGENT?.trim() || DEFAULT_UA,
+        Accept: "application/json, application/xml;q=0.9, */*;q=0.8",
+      },
+      maxRedirects: 5,
     });
     this.rateLimiter = new RateLimiter(1000);
+    if (process.env.NODE_ENV === "development") {
+      console.log(`[LawClient] baseURL=${LAW_API_BASE_URL}`);
+    }
   }
 
   /**

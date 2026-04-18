@@ -36,12 +36,6 @@ async function startServer() {
     fixedRuleName: '전기안전관리자의 직무에 관한 고시',
   });
 
-  // 서버 시작 시 동기화 작업 강제 실행 (비동기, 에러 발생해도 서버는 정상 시작)
-  console.log('[Server] 🚀 Starting monitoring sync job...');
-  runSyncJob().catch(error => {
-    console.error('[Server] ⚠️  Sync job error (서버는 정상 시작):', error);
-  });
-
   const app = express();
   const server = createServer(app);
   // Configure body parser with larger size limit for file uploads
@@ -73,6 +67,28 @@ async function startServer() {
 
   server.listen(port, () => {
     console.log(`\n✅ Server running on http://localhost:${port}/\n`);
+
+    const delayRaw = process.env.LAW_SYNC_START_DELAY_MS;
+    const delayMs =
+      delayRaw != null && delayRaw !== ""
+        ? Math.max(0, parseInt(delayRaw, 10) || 0)
+        : 2500;
+
+    const startSync = () => {
+      console.log("[Server] 🚀 Starting monitoring sync job...");
+      runSyncJob().catch((error) => {
+        console.error("[Server] ⚠️  Sync job error (서버는 정상 실행):", error);
+      });
+    };
+
+    if (delayMs <= 0) {
+      startSync();
+    } else {
+      console.log(
+        `[Server] Sync job starts in ${delayMs}ms (첫 법제처 요청 ECONNRESET 완화; LAW_SYNC_START_DELAY_MS=0 이면 즉시)`
+      );
+      setTimeout(startSync, delayMs);
+    }
   });
 }
 

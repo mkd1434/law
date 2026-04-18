@@ -10,7 +10,9 @@
     "check": "tsc --noEmit",
     "format": "prettier --write .",
     "test": "vitest run",
-    "db:push": "drizzle-kit generate && drizzle-kit migrate",
+    "db:push": "drizzle-kit push",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
     "db:ensure-content": "tsx scripts/ensure-change-logs-content.ts",
     "sync:test": "cross-env NODE_ENV=development tsx server/jobs/testSync.ts"
   },

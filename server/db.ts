@@ -236,7 +236,7 @@ export async function getChangeLogs(filters?: ChangeLogSelectFilters) {
     }
     console.error("[DB] getChangeLogs SQL error:", err);
     console.error(
-      "[DB] If the message mentions unknown column, apply drizzle migrations (e.g. 0002 content, 0003 longtext) or pnpm db:push."
+      "[DB] If the message mentions unknown column, run pnpm db:push (schema sync) or pnpm db:ensure-content, or drizzle 0004."
     );
     throw err;
   }

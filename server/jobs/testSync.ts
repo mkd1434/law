@@ -1,10 +1,13 @@
 /**
  * 법령 데이터 수집 테스트 스크립트
  * 18개 법령에 대해 최근 변경이력을 조회하고 DB에 저장
+ *
+ * 스캔 기간: server/api/lawDetector.ts의 LAW_CHANGE_HISTORY_LOOKBACK_YEARS(기본 1년)
+ * 또는 환경변수 LAW_LS_HST_LOOKBACK_YEARS=3
  */
 
 import { getDb } from '../db';
-import { detectAndCollectLawChanges } from '../api/lawDetector';
+import { syncMonitoredLawsFromChangeHistory } from '../api/lawDetector';
 import { monitoredItems } from '../../drizzle/schema';
 import { eq, and } from 'drizzle-orm';
 
@@ -31,32 +34,29 @@ async function runTestSync() {
       return;
     }
 
-    // 각 항목에 대해 변동 감지 및 수집
+    const laws = items.map((item) => ({
+      itemId: item.id,
+      mst: item.externalId || '',
+      name: item.name,
+    }));
+
+    console.log('[TestSync] lsHstInf 일괄 스캔 시작...\n');
     let totalDetected = 0;
     let totalCollected = 0;
     const allErrors: string[] = [];
 
-    for (const item of items) {
-      try {
-        console.log(`[TestSync] 처리 중: ${item.name} (ID: ${item.id}, MST: ${item.externalId})`);
-
-        const result = await detectAndCollectLawChanges(
-          item.id,
-          item.externalId || '',
-          item.name
-        );
-
-        totalDetected += result.detected;
-        totalCollected += result.collected;
-        allErrors.push(...result.errors);
-
-        const errorCount = result.errors.length > 0 ? `, 에러: ${result.errors.length}개` : '';
-        console.log(`  → 감지: ${result.detected}개, 수집: ${result.collected}개${errorCount}\n`);
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        console.error(`[TestSync] 오류: ${errorMsg}\n`);
-        allErrors.push(`Error processing ${item.name}: ${errorMsg}`);
-      }
+    try {
+      const result = await syncMonitoredLawsFromChangeHistory(laws);
+      totalDetected = result.detected;
+      totalCollected = result.collected;
+      allErrors.push(...result.errors);
+      console.log(
+        `  → 감지: ${result.detected}개, 수집: ${result.collected}개, 에러: ${result.errors.length}개\n`
+      );
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error(`[TestSync] 오류: ${errorMsg}\n`);
+      allErrors.push(errorMsg);
     }
 
     console.log('\n[TestSync] 테스트 완료');

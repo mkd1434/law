@@ -1,16 +1,72 @@
 /**
- * 행정규칙 변동 감지 및 수집 로직
- * 행정규칙(고시) 목록 조회 API를 통해 변동을 감지하고 신구규칙 비교 데이터를 수집
+ * 행정규칙 변동 감지
+ * 1) admrul: query(행정규칙명) + prmlYd(발령 기간)으로 목록 조회
+ * 2) 시행일자 기준으로 최근 3년·시행 예정만 유지
+ * 3) admrulOldAndNew: 행정규칙일련번호(ID) 우선, 없으면 행정규칙ID(LID)
  */
 
 import { lawAPIClient } from './lawClient';
-import { addChangeLog, getLatestChangeLogForItem, type ChangeLogWritePayload } from '../db';
+import { getLatestChangeLogForItem, upsertChangeLog, type ChangeLogWritePayload } from '../db';
+
+function formatDateForAPI(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}${month}${day}`;
+}
+
+function parseYyyymmdd(value: string | number | undefined | null): Date | null {
+  if (value === null || value === undefined) return null;
+  const s = String(value).replace(/\D/g, '');
+  if (!/^\d{8}$/.test(s)) return null;
+  const year = parseInt(s.substring(0, 4), 10);
+  const month = parseInt(s.substring(4, 6), 10) - 1;
+  const day = parseInt(s.substring(6, 8), 10);
+  return new Date(year, month, day);
+}
+
+function monitoredRuleMatchesRow(row: any, ruleName: string): boolean {
+  const n = row?.행정규칙명?.trim?.() ?? '';
+  const q = ruleName.trim();
+  if (!n || !q) return false;
+  return n === q || n.includes(q) || q.includes(n);
+}
+
+function effectiveInMonitoringScope(effective: Date, threeYearsAgo: Date, today: Date): boolean {
+  const eff = new Date(effective);
+  eff.setHours(0, 0, 0, 0);
+  const t0 = new Date(today);
+  t0.setHours(0, 0, 0, 0);
+  if (eff.getTime() > t0.getTime()) return true;
+  const from = new Date(threeYearsAgo);
+  from.setHours(0, 0, 0, 0);
+  return eff.getTime() >= from.getTime();
+}
+
+export function toRuleContentPayload(response: any): { content: string; oldText: string; newText: string } {
+  const svc = response?.AdmrulOldAndNewService ?? response?.admrulOldAndNew ?? response;
+  const newArticles = svc?.신조문목록 ?? response?.신조문목록 ?? null;
+  const oldArticles = svc?.구조문목록 ?? response?.구조문목록 ?? null;
+  const payload = { 신조문목록: newArticles, 구조문목록: oldArticles };
+  const content = JSON.stringify(payload);
+
+  const collectHtml = (node: any): string[] => {
+    if (node === null || node === undefined) return [];
+    if (typeof node === 'string') {
+      return node.includes('<') && node.includes('>') ? [node] : [];
+    }
+    if (Array.isArray(node)) return node.flatMap(collectHtml);
+    if (typeof node === 'object') return Object.values(node).flatMap(collectHtml);
+    return [];
+  };
+
+  const oldText = collectHtml(oldArticles).join('\n');
+  const newText = collectHtml(newArticles).join('\n');
+  return { content, oldText, newText };
+}
 
 /**
  * 행정규칙 변동 감지 및 수집
- * @param itemId - monitored_items 테이블의 ID
- * @param ruleName - 행정규칙 이름 (고시명)
- * @param lastKnownDate - 마지막으로 알려진 발령일자 (DB에서 조회)
  */
 export async function detectAndCollectRuleChanges(
   itemId: number,
@@ -23,83 +79,114 @@ export async function detectAndCollectRuleChanges(
   let collectedCount = 0;
 
   try {
-    // Step 1: 행정규칙 목록 조회 (3년 범위)
-    console.log(`[Rule] 📋 Fetching admin rules for ${ruleName}`);
-    
     const today = new Date();
+    today.setHours(0, 0, 0, 0);
     const threeYearsAgo = new Date(today.getFullYear() - 3, today.getMonth(), today.getDate());
+
     const startDate = formatDateForAPI(threeYearsAgo);
     const endDate = formatDateForAPI(today);
+    const prmlYd = `${startDate}~${endDate}`;
 
-    const ruleList = await lawAPIClient.getAdminRulesByDateRange(startDate, endDate);
+    console.log(`[Rule] 📋 admrul query="${ruleName}" prmlYd=${prmlYd}`);
 
-    if (!ruleList || !ruleList.data) {
-      console.log(`[Rule] ℹ️  No admin rules found for ${ruleName}`);
-      return { detected: 0, collected: 0, errors: [] };
-    }
-
-    // Step 2: 해당 고시명의 항목 필터링
-    const rules = Array.isArray(ruleList.data) ? ruleList.data : [ruleList.data];
-    const targetRules = rules.filter((rule: any) => {
-      return rule.법령명 && rule.법령명.includes(ruleName);
+    const rows = await lawAPIClient.searchAdminRulesAll({
+      query: ruleName,
+      prmlYd,
     });
 
+    const targetRules = rows.filter((row: any) => monitoredRuleMatchesRow(row, ruleName));
+
     if (targetRules.length === 0) {
-      console.warn(`[Rule] No matching rules found for ${ruleName}`);
+      console.warn(`[Rule] No matching rules for ${ruleName}`);
       return { detected: 0, collected: 0, errors };
     }
 
-    console.log(`[Rule] ✅ Found ${targetRules.length} matching rules`);
+    console.log(`[Rule] ✅ ${targetRules.length} row(s) after name filter`);
 
-    // Step 3: DB와 대조하여 신규/미래 데이터 판별
+    let latestAnnouncement: Date | null = null;
+    if (lastKnownDate) {
+      latestAnnouncement = lastKnownDate;
+    } else {
+      const latest = await getLatestChangeLogForItem(itemId);
+      const effRaw = latest?.effectiveDate;
+      if (effRaw != null && effRaw !== '') {
+        latestAnnouncement = new Date(effRaw as string | number | Date);
+      }
+    }
+
     for (const rule of targetRules) {
       try {
-        const announcementDate = parseDate(rule.발령일자);
-        const effectiveDate = parseDate(rule.시행일자);
-        const announcementNo = rule.공고번호 || '';
-        const ruleLid = rule.법령LID;
+        const serial = rule.행정규칙일련번호 ?? rule['행정규칙일련번호'];
+        const lid = rule.행정규칙ID ?? rule['행정규칙ID'];
+        const eff = parseYyyymmdd(rule.시행일자);
+        const prom = parseYyyymmdd(rule.발령일자);
 
-        if (!effectiveDate || !announcementNo) {
-          console.warn(`[Rule] Skipping rule due to missing data:`, rule);
+        if (!eff) {
+          console.warn(`[Rule] Skip (no 시행일자):`, rule);
           continue;
         }
 
-        // 마지막 알려진 날짜보다 이후인지 확인
-        if (lastKnownDate && announcementDate && announcementDate <= lastKnownDate) {
-          console.log(`[Rule] Rule already known: ${announcementNo}`);
+        if (!effectiveInMonitoringScope(eff, threeYearsAgo, today)) {
           continue;
         }
 
-        // 오늘 날짜보다 미래인지 확인하여 status 결정
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const status = effectiveDate > today ? 'upcoming' : 'current';
+        if (latestAnnouncement && prom && prom <= latestAnnouncement) {
+          console.log(`[Rule] Already known 발령: ${prom.toISOString()}`);
+          continue;
+        }
+
+        const serialStr = serial != null && String(serial).trim() !== '' ? String(serial) : undefined;
+        const lidStr = lid != null && String(lid).trim() !== '' ? String(lid) : undefined;
+
+        let comparison: any = null;
+        if (serialStr) {
+          comparison = await lawAPIClient.getAdminRuleComparison({ id: serialStr });
+        }
+        if (!comparison && lidStr) {
+          comparison = await lawAPIClient.getAdminRuleComparison({ lid: lidStr });
+        }
+
+        if (!comparison) {
+          errors.push(`admrulOldAndNew 실패: ${ruleName} serial=${serialStr ?? 'n/a'} lid=${lidStr ?? 'n/a'}`);
+          continue;
+        }
+
+        const exist = comparison?.신구법존재여부 ?? comparison?.AdmrulOldAndNewService?.신구법존재여부;
+        if (exist === 'N' || exist === 'n') {
+          console.log(`[Rule] 신구법 없음, 스킵: ${ruleName}`);
+          continue;
+        }
+
+        const status = eff.getTime() > today.getTime() ? 'upcoming' : 'current';
+        const promStr = prom ? formatDateForAPI(prom) : 'unknown';
+        const effStr = formatDateForAPI(eff);
+        const announcementNo = `AR-${serialStr ?? lidStr ?? 'x'}-${promStr}-${effStr}`;
 
         detectedCount++;
 
-        // Step 4: 신구규칙 비교 본문 조회
-        if (ruleLid) {
-          console.log(`[Rule] Fetching comparison data for LID ${ruleLid}`);
-          const comparisonData = await lawAPIClient.getAdminRuleComparison(ruleLid);
+        const { content, oldText, newText } = toRuleContentPayload(comparison);
 
-          // Step 5: DB에 저장
-          const changeLog: ChangeLogWritePayload = {
-            itemId,
-            announcementNo,
-            effectiveDate,
-            status: status as 'current' | 'upcoming',
-            comparisonData: comparisonData || null,
-            rawData: rule,
-          };
+        const changeLog: ChangeLogWritePayload = {
+          itemId,
+          announcementNo,
+          effectiveDate: eff,
+          status: status as 'current' | 'upcoming',
+          comparisonData: {
+            ...comparison,
+            oldText,
+            newText,
+            _admrulListRow: rule,
+          },
+          content,
+          rawData: { listRow: rule, admrulOldAndNew: comparison },
+        };
 
-          await addChangeLog(changeLog);
-          collectedCount++;
-
-          console.log(`[Rule] Successfully collected change: ${announcementNo}`);
-        }
+        await upsertChangeLog(changeLog);
+        collectedCount++;
+        console.log(`[Rule] 💾 ${announcementNo}`);
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-        console.error(`[Rule] Error processing rule:`, errorMsg);
+        console.error(`[Rule] Error processing rule row:`, errorMsg);
         errors.push(`Error processing rule: ${errorMsg}`);
       }
     }
@@ -110,49 +197,6 @@ export async function detectAndCollectRuleChanges(
   }
 
   return { detected: detectedCount, collected: collectedCount, errors };
-}
-
-/**
- * 날짜 포맷팅 (YYYYMMDD)
- */
-function formatDateForAPI(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}${month}${day}`;
-}
-
-/**
- * 날짜 파싱 유틸리티
- * 다양한 형식의 날짜 문자열을 Date 객체로 변환
- */
-function parseDate(dateStr: string | undefined): Date | null {
-  if (!dateStr) return null;
-
-  // YYYYMMDD 형식
-  if (/^\d{8}$/.test(dateStr)) {
-    const year = parseInt(dateStr.substring(0, 4));
-    const month = parseInt(dateStr.substring(4, 6)) - 1;
-    const day = parseInt(dateStr.substring(6, 8));
-    return new Date(year, month, day);
-  }
-
-  // YYYY-MM-DD 형식
-  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-    return new Date(dateStr);
-  }
-
-  // ISO 8601 형식
-  try {
-    const date = new Date(dateStr);
-    if (!isNaN(date.getTime())) {
-      return date;
-    }
-  } catch (e) {
-    // 파싱 실패
-  }
-
-  return null;
 }
 
 /**
@@ -167,11 +211,7 @@ export async function detectAndCollectAllRules(
 
   for (const rule of rules) {
     try {
-      const result = await detectAndCollectRuleChanges(
-        rule.itemId,
-        rule.name,
-        rule.lastKnownDate
-      );
+      const result = await detectAndCollectRuleChanges(rule.itemId, rule.name, rule.lastKnownDate);
       totalDetected += result.detected;
       totalCollected += result.collected;
       allErrors.push(...result.errors);

@@ -9,7 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import { getDb } from '../db';
 import { monitoredItems } from '../../drizzle/schema';
-import { detectAndCollectLawChanges } from '../api/lawDetector';
+import { syncMonitoredLawsFromChangeHistory } from '../api/lawDetector';
 import { eq } from 'drizzle-orm';
 
 interface LawRecord {
@@ -183,36 +183,24 @@ async function collectLawData(): Promise<void> {
     let totalCollected = 0;
     const allErrors: string[] = [];
 
-    // Rate Limiting: 2개씩 처리
-    const batchSize = 2;
-    for (let i = 0; i < laws.length; i += batchSize) {
-      const batch = laws.slice(i, i + batchSize);
-      console.log(`\n📦 배치 ${Math.floor(i / batchSize) + 1}/${Math.ceil(laws.length / batchSize)}`);
-      console.log('─'.repeat(50));
+    console.log('\n📦 법령: lsHstInf 일별 스캔 (모니터링 목록 일괄 매칭)');
+    console.log('─'.repeat(50));
 
-      for (const law of batch) {
-        try {
-          const result = await detectAndCollectLawChanges(
-            law.id,
-            law.externalId || '',
-            law.name
-          );
-
-          totalDetected += result.detected;
-          totalCollected += result.collected;
-          allErrors.push(...result.errors);
-        } catch (error) {
-          const errorMsg = error instanceof Error ? error.message : String(error);
-          console.error(`❌ 오류: ${law.name} - ${errorMsg}`);
-          allErrors.push(`Error processing ${law.name}: ${errorMsg}`);
-        }
-      }
-
-      // 배치 간 1.5초 지연
-      if (i + batchSize < laws.length) {
-        console.log('\n⏳ 배치 간 지연 (1.5초)...');
-        await new Promise(resolve => setTimeout(resolve, 1500));
-      }
+    try {
+      const result = await syncMonitoredLawsFromChangeHistory(
+        laws.map((law) => ({
+          itemId: law.id,
+          mst: law.externalId || '',
+          name: law.name,
+        }))
+      );
+      totalDetected = result.detected;
+      totalCollected = result.collected;
+      allErrors.push(...result.errors);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error(`❌ 법령 수집 오류: ${errorMsg}`);
+      allErrors.push(errorMsg);
     }
 
     console.log('\n═══════════════════════════════════════════════════════════');

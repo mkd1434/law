@@ -4,7 +4,10 @@
  */
 
 import { getMonitoredItems } from '../db';
-import { detectAndCollectLawChanges } from '../api/lawDetector';
+import {
+  LAW_CHANGE_HISTORY_LOOKBACK_YEARS,
+  syncMonitoredLawsFromChangeHistory,
+} from '../api/lawDetector';
 import { detectAndCollectRuleChanges } from '../api/ruleDetector';
 
 /**
@@ -59,28 +62,29 @@ export async function runSyncJob(): Promise<void> {
       });
     }
 
-    // Step 3: 법령 변동 감지 및 수집
+    // Step 3: 법령 — 일별 lsHstInf 1회씩 조회 후 모니터링 법령 매칭 → oldAndNew
     if (laws.length > 0) {
-      console.log('[SyncJob] Processing laws...');
-      let totalLawDetected = 0;
-      let totalLawCollected = 0;
-      const lawErrors: string[] = [];
-
-      for (const law of laws) {
-        try {
-          const result = await detectAndCollectLawChanges(law.itemId, law.lawId, law.name);
-          totalLawDetected += result.detected;
-          totalLawCollected += result.collected;
-          lawErrors.push(...result.errors);
-        } catch (error) {
-          const errorMsg = error instanceof Error ? error.message : String(error);
-          lawErrors.push(`Error processing ${law.name}: ${errorMsg}`);
+      const envLookback = process.env.LAW_LS_HST_LOOKBACK_YEARS;
+      console.log(
+        `[SyncJob] Processing laws (batch lsHstInf, lookback years: ${envLookback ?? LAW_CHANGE_HISTORY_LOOKBACK_YEARS}${envLookback ? ' from env' : ' default'}; override with LAW_LS_HST_LOOKBACK_YEARS)...`
+      );
+      try {
+        const result = await syncMonitoredLawsFromChangeHistory(
+          laws.map((law) => ({
+            itemId: law.itemId,
+            mst: law.lawId,
+            name: law.name,
+          }))
+        );
+        console.log(
+          `[SyncJob] Laws - Detected: ${result.detected}, Collected: ${result.collected}`
+        );
+        if (result.errors.length > 0) {
+          console.warn('[SyncJob] Law errors:', result.errors);
         }
-      }
-
-      console.log(`[SyncJob] Laws - Detected: ${totalLawDetected}, Collected: ${totalLawCollected}`);
-      if (lawErrors.length > 0) {
-        console.warn('[SyncJob] Law errors:', lawErrors);
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        console.warn('[SyncJob] Law batch error:', errorMsg);
       }
     }
 

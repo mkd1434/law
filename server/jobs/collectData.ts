@@ -183,7 +183,7 @@ async function collectLawData(): Promise<void> {
     let totalCollected = 0;
     const allErrors: string[] = [];
 
-    console.log('\n📦 법령: lsHstInf 일별 스캔 (모니터링 목록 일괄 매칭)');
+    console.log('\n📦 법령: lsHstInf 기간(startDt~endDt) 청크 조회 (모니터링 목록 일괄 매칭)');
     console.log('─'.repeat(50));
 
     try {

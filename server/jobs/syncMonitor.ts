@@ -6,6 +6,7 @@
 import { getMonitoredItems } from '../db';
 import {
   LAW_CHANGE_HISTORY_LOOKBACK_YEARS,
+  LAW_LS_HST_RANGE_CHUNK_DAYS_DEFAULT,
   syncMonitoredLawsFromChangeHistory,
 } from '../api/lawDetector';
 import { detectAndCollectRuleChanges } from '../api/ruleDetector';
@@ -65,8 +66,9 @@ export async function runSyncJob(): Promise<void> {
     // Step 3: 법령 — 일별 lsHstInf 1회씩 조회 후 모니터링 법령 매칭 → oldAndNew
     if (laws.length > 0) {
       const envLookback = process.env.LAW_LS_HST_LOOKBACK_YEARS;
+      const envChunk = process.env.LAW_LS_HST_RANGE_CHUNK_DAYS;
       console.log(
-        `[SyncJob] Processing laws (batch lsHstInf, lookback years: ${envLookback ?? LAW_CHANGE_HISTORY_LOOKBACK_YEARS}${envLookback ? ' from env' : ' default'}; override with LAW_LS_HST_LOOKBACK_YEARS)...`
+        `[SyncJob] Laws: lsHstInf by startDt~endDt chunks (lookback years: ${envLookback ?? LAW_CHANGE_HISTORY_LOOKBACK_YEARS}, chunk days: ${envChunk ?? LAW_LS_HST_RANGE_CHUNK_DAYS_DEFAULT}; env LAW_LS_HST_*)...`
       );
       try {
         const result = await syncMonitoredLawsFromChangeHistory(

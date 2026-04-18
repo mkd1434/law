@@ -42,7 +42,7 @@ describe('lawDetector — 시행일자 추출 (oldAndNew)', () => {
   });
 });
 
-describe('lawDetector — lsHstInf → oldAndNew 배치', () => {
+describe('lawDetector — lsHstInf 기간 조회 → oldAndNew', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
@@ -55,7 +55,7 @@ describe('lawDetector — lsHstInf → oldAndNew 배치', () => {
     vi.restoreAllMocks();
   });
 
-  it('특정 regDt에 매칭되는 행만 oldAndNew 저장', async () => {
+  it('startDt~endDt 범위에 매칭되는 행만 oldAndNew 저장', async () => {
     const mockComparison = {
       OldAndNewService: {
         신조문_기본정보: { 시행일자: '20230808' },
@@ -64,12 +64,13 @@ describe('lawDetector — lsHstInf → oldAndNew 배치', () => {
       },
     };
 
-    const getAll = vi.fn(async (regDt: string) => {
-      if (regDt === '20240401') {
+    const getAllRange = vi.fn(async (startDt: string, endDt: string) => {
+      if (startDt <= '20240401' && endDt >= '20240401') {
         return [
           {
             법령명한글: '전기공사업법',
             법령ID: '282333',
+            공포일자: 20240401,
             시행일자: 20230808,
           },
         ];
@@ -81,9 +82,11 @@ describe('lawDetector — lsHstInf → oldAndNew 배치', () => {
     const mockUpsert = vi.spyOn(db, 'upsertChangeLog').mockResolvedValue(undefined as any);
 
     vi.spyOn(lawClient, 'lawAPIClient', 'get').mockReturnValue({
-      getAllLawChangeHistoryForDate: getAll,
+      getAllLawChangeHistoryForRange: getAllRange,
       getLawComparison,
+      getLawChangeHistoryByRange: vi.fn(),
       getLawChangeHistoryByDate: vi.fn(),
+      getAllLawChangeHistoryForDate: vi.fn(),
       searchAdminRulesPage: vi.fn(),
       searchAdminRulesAll: vi.fn(),
       getAdminRuleComparison: vi.fn(),
@@ -93,7 +96,8 @@ describe('lawDetector — lsHstInf → oldAndNew 배치', () => {
       [{ itemId: 1, mst: '282333', name: '전기공사업법' }],
       {
         lookbackYears: 3,
-        delayBetweenRegDtDaysMs: { min: 0, max: 0 },
+        rangeChunkDays: 400,
+        delayBetweenRangeChunksMs: { min: 0, max: 0 },
       }
     );
 

@@ -2,7 +2,7 @@
  * 국가법령정보 API 클라이언트
  *
  * 가이드 기준:
- * - 법령 변경이력: lawSearch.do?target=lsHstInf&regDt=YYYYMMDD
+ * - 법령 변경이력: lawSearch.do?target=lsHstInf (기간: startDt·endDt, 또는 단일일 regDt)
  * - 신구법 본문(법령): lawService.do?target=oldAndNew (ID 또는 MST)
  * - 행정규칙 목록: lawSearch.do?target=admrul (query, prmlYd 등)
  * - 신구법 본문(행정규칙): lawService.do?target=admrulOldAndNew (ID=일련번호 또는 LID)
@@ -87,7 +87,75 @@ export class LawAPIClient {
   }
 
   /**
-   * 법령 변경이력 목록 (특정 변경일 regDt 기준, 페이지네이션)
+   * 법령 변경이력 목록 (변경일 기간 startDt~endDt, 페이지네이션)
+   * @see lawSearch.do?target=lsHstInf&startDt=YYYYMMDD&endDt=YYYYMMDD&type=JSON
+   */
+  async getLawChangeHistoryByRange(
+    startDt: string,
+    endDt: string,
+    page: number = 1
+  ): Promise<any> {
+    return withRetry(async () => {
+      await this.rateLimiter.wait();
+
+      const params: Record<string, string | number> = {
+        target: 'lsHstInf',
+        OC: OC_ID,
+        type: 'JSON',
+        startDt,
+        endDt,
+        display: 100,
+        page,
+      };
+
+      console.log(`[LawClient] lsHstInf startDt=${startDt} endDt=${endDt} page=${page}`);
+      const response = await this.client.get('/lawSearch.do', { params });
+
+      if (!response.data) {
+        console.warn(`[LawClient] ⚠️  Empty lsHstInf response for ${startDt}~${endDt}`);
+        return { data: [], totalCnt: 0 };
+      }
+
+      if (response.data.error) {
+        console.error(
+          `[LawClient] ❌ lsHstInf API Error ${startDt}~${endDt}:`,
+          response.data.error
+        );
+        return { data: [], error: response.data.error, totalCnt: 0 };
+      }
+
+      const rows = normalizeLsHstInfList(response.data);
+      const totalCnt = readLsHstInfTotalCnt(response.data);
+      console.log(
+        `[LawClient] ✅ lsHstInf ${startDt}~${endDt} page ${page}: ${rows.length} rows (totalCnt≈${totalCnt})`
+      );
+      return { ...response.data, data: rows, totalCnt };
+    });
+  }
+
+  /** 기간 내 변경이력을 totalCnt·page 기준으로 모두 수집 */
+  async getAllLawChangeHistoryForRange(startDt: string, endDt: string): Promise<any[]> {
+    const all: any[] = [];
+    let page = 1;
+    let totalCnt = 0;
+
+    while (true) {
+      const res = await this.getLawChangeHistoryByRange(startDt, endDt, page);
+      if (!res || res.error) break;
+      const chunk = Array.isArray(res.data) ? res.data : normalizeLsHstInfList(res);
+      if (chunk.length === 0) break;
+      all.push(...chunk);
+      totalCnt = res.totalCnt ?? readLsHstInfTotalCnt(res) ?? totalCnt;
+      if (totalCnt > 0 && all.length >= totalCnt) break;
+      if (chunk.length < 100) break;
+      page += 1;
+    }
+
+    return all;
+  }
+
+  /**
+   * 법령 변경이력 목록 (특정 변경일 regDt만 — 구버전/호환용)
    * @see lawSearch.do?target=lsHstInf&regDt=YYYYMMDD&type=JSON
    */
   async getLawChangeHistoryByDate(regDt: string, page: number = 1): Promise<any> {
@@ -123,7 +191,7 @@ export class LawAPIClient {
     });
   }
 
-  /** regDt 하루치 변경이력을 display/page 기준으로 모두 가져옴 */
+  /** regDt 하루치 변경이력 (호환용) */
   async getAllLawChangeHistoryForDate(regDt: string): Promise<any[]> {
     const all: any[] = [];
     let page = 1;

@@ -1,4 +1,4 @@
-import { eq, desc } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { InsertUser, users, monitoredItems, InsertMonitoredItem, changeLogs, InsertChangeLog } from "../drizzle/schema";
 import { ENV } from './_core/env';
@@ -126,14 +126,16 @@ export async function getMonitoredItems(filters?: { type?: 'law' | 'rule'; isAct
   const db = await getDb();
   if (!db) return [];
 
-  let query = db.select().from(monitoredItems) as any;
+  const conditions = [];
   if (filters?.type) {
-    query = query.where(eq(monitoredItems.type, filters.type));
+    conditions.push(eq(monitoredItems.type, filters.type));
   }
   if (filters?.isActive !== undefined) {
-    query = query.where(eq(monitoredItems.isActive, filters.isActive ? 1 : 0));
+    conditions.push(eq(monitoredItems.isActive, filters.isActive ? 1 : 0));
   }
-  return query.execute();
+  const base = db.select().from(monitoredItems);
+  const q = conditions.length > 0 ? base.where(and(...conditions)) : base;
+  return q.execute();
 }
 
 /**
@@ -170,18 +172,18 @@ export async function getChangeLogs(filters?: { itemId?: number; status?: 'curre
   const db = await getDb();
   if (!db) return [];
 
-  let query = db.select().from(changeLogs) as any;
-  if (filters?.itemId) {
-    query = query.where(eq(changeLogs.itemId, filters.itemId));
+  const conditions = [];
+  if (filters?.itemId !== undefined) {
+    conditions.push(eq(changeLogs.itemId, filters.itemId));
   }
   if (filters?.status) {
-    query = query.where(eq(changeLogs.status, filters.status));
+    conditions.push(eq(changeLogs.status, filters.status));
   }
-  query = query.orderBy(desc(changeLogs.effectiveDate));
-  if (filters?.limit) {
-    query = query.limit(filters.limit);
-  }
-  const rows = await query.execute();
+  const base = db.select().from(changeLogs);
+  const filtered = conditions.length > 0 ? base.where(and(...conditions)) : base;
+  const ordered = filtered.orderBy(desc(changeLogs.effectiveDate));
+  const limited = filters?.limit ? ordered.limit(filters.limit) : ordered;
+  const rows = await limited.execute();
   return (rows as any[]).map((row) => mapChangeLogRow(row));
 }
 

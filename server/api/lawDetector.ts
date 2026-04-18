@@ -1,6 +1,6 @@
 /**
  * 법령 개정 감시
- * 1) lsHstInf: 최근 N년 변경일(regDt)별로 이력 수집 → 모니터링 대상 법령만 필터
+ * 1) lsHstInf: startDt~endDt 기간(필요 시 일수 청크)으로 변경이력 수집 → 모니터링 법령만 필터
  * 2) oldAndNew: 법령ID(또는 MST)로 신·구 조문 본문 조회 후 저장
  */
 
@@ -9,12 +9,18 @@ import { upsertChangeLog } from '../db';
 
 /**
  * lsHstInf를 스캔할 기간(오늘 기준 과거 몇 년).
- * 안정화 후 `3` 등으로 올리면 됨. `LAW_LS_HST_LOOKBACK_YEARS` 환경변수가 있으면 우선.
+ * `LAW_LS_HST_LOOKBACK_YEARS` 환경변수가 있으면 우선.
  */
 export const LAW_CHANGE_HISTORY_LOOKBACK_YEARS = 1;
 
-const LS_HST_INTER_DAY_DELAY_MIN_MS = 500;
-const LS_HST_INTER_DAY_DELAY_MAX_MS = 1000;
+/**
+ * 한 번의 lsHstInf 요청이 담는 최대 일수(기본 ≈ 1년).
+ * 한 달 단위로 쪼개려면 31 등. `LAW_LS_HST_RANGE_CHUNK_DAYS` 환경변수로 덮어쓰기 가능.
+ */
+export const LAW_LS_HST_RANGE_CHUNK_DAYS_DEFAULT = 366;
+
+const LS_HST_INTER_CHUNK_DELAY_MIN_MS = 500;
+const LS_HST_INTER_CHUNK_DELAY_MAX_MS = 1000;
 
 function resolveLookbackYears(override?: number): number {
   if (typeof override === 'number' && override > 0) {
@@ -30,39 +36,19 @@ function resolveLookbackYears(override?: number): number {
   return LAW_CHANGE_HISTORY_LOOKBACK_YEARS;
 }
 
-function formatDateISO(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+function resolveRangeChunkDays(override?: number): number {
+  if (typeof override === 'number' && override > 0) {
+    return Math.min(override, 3660);
+  }
+  const env = process.env.LAW_LS_HST_RANGE_CHUNK_DAYS;
+  if (env != null && env !== '') {
+    const n = parseInt(env, 10);
+    if (Number.isFinite(n) && n > 0) {
+      return Math.min(n, 3660);
+    }
+  }
+  return LAW_LS_HST_RANGE_CHUNK_DAYS_DEFAULT;
 }
-
-function countCalendarDaysInclusive(from: Date, to: Date): number {
-  const a = new Date(from.getFullYear(), from.getMonth(), from.getDate()).getTime();
-  const b = new Date(to.getFullYear(), to.getMonth(), to.getDate()).getTime();
-  return Math.floor((b - a) / 86400000) + 1;
-}
-
-function randomInterDayDelayMs(min: number, max: number): number {
-  if (max <= 0) return 0;
-  if (min >= max) return min;
-  return min + Math.floor(Math.random() * (max - min + 1));
-}
-
-async function sleepMs(ms: number): Promise<void> {
-  if (ms <= 0) return;
-  await new Promise((r) => setTimeout(r, ms));
-}
-
-export type SyncMonitoredLawsFromHistoryOptions = {
-  /** 기본: LAW_CHANGE_HISTORY_LOOKBACK_YEARS / 환경변수 */
-  lookbackYears?: number;
-  /**
-   * regDt 하루 처리가 끝난 뒤 다음 날 lsHstInf 호출 전 대기(밀리초).
-   * 기본 500~1000ms 랜덤. 테스트는 `{ min: 0, max: 0 }`.
-   */
-  delayBetweenRegDtDaysMs?: { min: number; max: number };
-};
 
 function formatDateForAPI(date: Date): string {
   const year = date.getFullYear();
@@ -82,6 +68,44 @@ function normalizeDateValue(value: unknown): string | null {
   const digitsOnly = String(value).replace(/\D/g, '');
   return /^\d{8}$/.test(digitsOnly) ? digitsOnly : null;
 }
+
+function randomChunkDelayMs(min: number, max: number): number {
+  if (max <= 0) return 0;
+  if (min >= max) return min;
+  return min + Math.floor(Math.random() * (max - min + 1));
+}
+
+async function sleepMs(ms: number): Promise<void> {
+  if (ms <= 0) return;
+  await new Promise((r) => setTimeout(r, ms));
+}
+
+/** [windowStart, today] 를 최대 maxDays일 단위(포함 구간)로 나눔 */
+function buildDateRangeChunks(windowStart: Date, today: Date, maxDays: number): { startDt: string; endDt: string }[] {
+  const chunks: { startDt: string; endDt: string }[] = [];
+  let cur = new Date(windowStart);
+  cur.setHours(0, 0, 0, 0);
+  const end = new Date(today);
+  end.setHours(0, 0, 0, 0);
+
+  while (cur.getTime() <= end.getTime()) {
+    const chunkEnd = addDays(cur, maxDays - 1);
+    const to = chunkEnd.getTime() > end.getTime() ? end : chunkEnd;
+    chunks.push({ startDt: formatDateForAPI(cur), endDt: formatDateForAPI(to) });
+    cur = addDays(to, 1);
+  }
+  return chunks;
+}
+
+export type SyncMonitoredLawsFromHistoryOptions = {
+  lookbackYears?: number;
+  /** 한 청크 최대 일수 (기본: LAW_LS_HST_RANGE_CHUNK_DAYS_DEFAULT / 환경변수) */
+  rangeChunkDays?: number;
+  /**
+   * 기간 청크 사이 대기(기본 500~1000ms). 테스트는 `{ min: 0, max: 0 }`.
+   */
+  delayBetweenRangeChunksMs?: { min: number; max: number };
+};
 
 function lawHistoryRowName(row: any): string | undefined {
   return row?.법령명한글 ?? row?.법령명;
@@ -185,8 +209,7 @@ export type MonitoredLawInput = {
 };
 
 /**
- * 최근 N년간 regDt를 하루씩 돌며 lsHstInf → 모니터링 법령이면 oldAndNew 저장.
- * 일별 lsHstInf 묶음 처리 후 다음 날짜로 넘어가기 전 0.5~1초(기본) 대기.
+ * lsHstInf를 startDt~endDt 기간(청크)으로 조회한 뒤 모니터링 법령이면 oldAndNew 저장.
  */
 export async function syncMonitoredLawsFromChangeHistory(
   laws: MonitoredLawInput[],
@@ -201,9 +224,10 @@ export async function syncMonitoredLawsFromChangeHistory(
   }
 
   const lookbackYears = resolveLookbackYears(options?.lookbackYears);
-  const delayBounds = options?.delayBetweenRegDtDaysMs ?? {
-    min: LS_HST_INTER_DAY_DELAY_MIN_MS,
-    max: LS_HST_INTER_DAY_DELAY_MAX_MS,
+  const chunkDays = resolveRangeChunkDays(options?.rangeChunkDays);
+  const delayBounds = options?.delayBetweenRangeChunksMs ?? {
+    min: LS_HST_INTER_CHUNK_DELAY_MIN_MS,
+    max: LS_HST_INTER_CHUNK_DELAY_MAX_MS,
   };
 
   const today = new Date();
@@ -214,26 +238,21 @@ export async function syncMonitoredLawsFromChangeHistory(
     today.getDate()
   );
 
-  const totalDays = countCalendarDaysInclusive(windowStart, today);
-  let dayIndex = 0;
-
+  const chunks = buildDateRangeChunks(windowStart, today, chunkDays);
   const seenKeys = new Set<string>();
 
-  for (let d = new Date(windowStart); d.getTime() <= today.getTime(); d = addDays(d, 1)) {
-    dayIndex += 1;
-    const regDt = formatDateForAPI(d);
-    const iso = formatDateISO(d);
-
+  for (let ci = 0; ci < chunks.length; ci++) {
+    const { startDt, endDt } = chunks[ci];
     console.log(
-      `[LawSync] Processing date: ${iso} (${dayIndex}/${totalDays}) regDt=${regDt} lookbackYears=${lookbackYears}`
+      `[LawSync] lsHstInf range ${startDt}~${endDt} (chunk ${ci + 1}/${chunks.length}, lookbackYears=${lookbackYears}, chunkDays=${chunkDays})`
     );
 
     let rows: any[] = [];
     try {
-      rows = await lawAPIClient.getAllLawChangeHistoryForDate(regDt);
+      rows = await lawAPIClient.getAllLawChangeHistoryForRange(startDt, endDt);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      errors.push(`lsHstInf ${regDt}: ${msg}`);
+      errors.push(`lsHstInf ${startDt}~${endDt}: ${msg}`);
       continue;
     }
 
@@ -253,21 +272,27 @@ export async function syncMonitoredLawsFromChangeHistory(
       }
 
       if (!comparison) {
-        errors.push(`oldAndNew 실패: ${monitored.name} regDt=${regDt} lawId=${lawId ?? 'n/a'}`);
+        errors.push(
+          `oldAndNew 실패: ${monitored.name} range=${startDt}~${endDt} lawId=${lawId ?? 'n/a'}`
+        );
         continue;
       }
 
       const effectiveFromRow = normalizeDateValue(row.시행일자);
       const effectiveDateStr =
-        effectiveFromRow ?? extractEffectiveDateFromComparison(comparison) ?? normalizeDateValue(comparison?._extractedEffectiveDate);
+        effectiveFromRow ??
+        extractEffectiveDateFromComparison(comparison) ??
+        normalizeDateValue(comparison?._extractedEffectiveDate);
 
       if (!effectiveDateStr) {
-        console.error(`[Law] ❌ 시행일자 없음: ${monitored.name} regDt=${regDt}`);
-        errors.push(`No effective date: ${monitored.name} regDt=${regDt}`);
+        console.error(`[Law] ❌ 시행일자 없음: ${monitored.name} range=${startDt}~${endDt}`);
+        errors.push(`No effective date: ${monitored.name} range=${startDt}~${endDt}`);
         continue;
       }
 
-      const dedupeKey = `${monitored.itemId}|${lawId ?? monitored.mst}|${regDt}|${effectiveDateStr}`;
+      const promulgation = normalizeDateValue(row.공포일자) ?? 'unk';
+
+      const dedupeKey = `${monitored.itemId}|${lawId ?? monitored.mst}|${promulgation}|${effectiveDateStr}`;
       if (seenKeys.has(dedupeKey)) continue;
       seenKeys.add(dedupeKey);
 
@@ -283,7 +308,7 @@ export async function syncMonitoredLawsFromChangeHistory(
         effDay.setHours(0, 0, 0, 0);
         const status = effDay.getTime() > today.getTime() ? 'upcoming' : 'current';
 
-        const announcementNo = `LS-${lawId ?? monitored.mst}-${regDt}-${effectiveDateStr}`;
+        const announcementNo = `LS-${lawId ?? monitored.mst}-${promulgation}-${effectiveDateStr}`;
         const { content, oldText, newText } = toLawContentPayload(comparison);
 
         console.log(`[DB Save] 💾 ${monitored.name} ${announcementNo} status=${status}`);
@@ -297,7 +322,7 @@ export async function syncMonitoredLawsFromChangeHistory(
             ...comparison,
             oldText,
             newText,
-            _sourceRegDt: regDt,
+            _lsHstInfRange: { startDt, endDt },
             _lsHstInfRow: row,
           },
           content,
@@ -312,10 +337,10 @@ export async function syncMonitoredLawsFromChangeHistory(
       }
     }
 
-    if (d.getTime() < today.getTime()) {
-      const waitMs = randomInterDayDelayMs(delayBounds.min, delayBounds.max);
+    if (ci < chunks.length - 1) {
+      const waitMs = randomChunkDelayMs(delayBounds.min, delayBounds.max);
       if (waitMs > 0) {
-        console.log(`[LawSync] lsHstInf inter-day delay ${waitMs}ms before next regDt`);
+        console.log(`[LawSync] lsHstInf inter-chunk delay ${waitMs}ms`);
         await sleepMs(waitMs);
       }
     }

@@ -6,7 +6,7 @@
  */
 
 import { lawAPIClient } from './lawClient';
-import { joinArticleDisplayText } from '@shared/extractArticleDisplayText';
+import { toRuleContentPayload } from '@shared/oldNewContentPayload';
 import { getSyncLookbackWindowDays } from './lawDetector';
 import { getLatestChangeLogForItem, upsertChangeLog, type ChangeLogWritePayload } from '../db';
 
@@ -110,18 +110,6 @@ function effectiveInMonitoringScope(effective: Date, threeYearsAgo: Date, today:
   const from = new Date(threeYearsAgo);
   from.setHours(0, 0, 0, 0);
   return eff.getTime() >= from.getTime();
-}
-
-export function toRuleContentPayload(response: any): { content: string; oldText: string; newText: string } {
-  const svc = response?.AdmrulOldAndNewService ?? response?.admrulOldAndNew ?? response;
-  const newArticles = svc?.신조문목록 ?? response?.신조문목록 ?? null;
-  const oldArticles = svc?.구조문목록 ?? response?.구조문목록 ?? null;
-  const payload = { 신조문목록: newArticles, 구조문목록: oldArticles };
-  const content = JSON.stringify(payload);
-
-  const oldText = joinArticleDisplayText(oldArticles);
-  const newText = joinArticleDisplayText(newArticles);
-  return { content, oldText, newText };
 }
 
 /**

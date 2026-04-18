@@ -4,7 +4,27 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 import { trpc } from '@/lib/trpc';
-import { joinArticleDisplayText } from '@shared/extractArticleDisplayText';
+import {
+  joinArticleDisplayText,
+  joinArticleDisplayTextDeep,
+} from '@shared/extractArticleDisplayText';
+import {
+  toLawContentPayload,
+  toRuleContentPayload,
+} from '@shared/oldNewContentPayload';
+
+function mergeLawRulePayload(envelope: unknown): {
+  oldText: string;
+  newText: string;
+} {
+  if (!envelope || typeof envelope !== 'object') return { oldText: '', newText: '' };
+  const law = toLawContentPayload(envelope);
+  const rule = toRuleContentPayload(envelope);
+  return {
+    oldText: (law.oldText || rule.oldText || '').trim(),
+    newText: (law.newText || rule.newText || '').trim(),
+  };
+}
 
 function pickArticleRoots(envelope: unknown): { old: unknown; new: unknown } {
   if (!envelope || typeof envelope !== 'object') return { old: null, new: null };
@@ -117,22 +137,37 @@ export default function DetailView() {
       : null;
   const rootsFromRaw = pickArticleRoots(rawEnvelope);
 
+  const treeOld = (root: unknown) =>
+    joinArticleDisplayText(root) || joinArticleDisplayTextDeep(root);
   const fromTreesOld =
-    joinArticleDisplayText(rootsFromComparison.old) ||
-    joinArticleDisplayText(rootsFromRaw.old);
+    treeOld(rootsFromComparison.old) || treeOld(rootsFromRaw.old);
   const fromTreesNew =
-    joinArticleDisplayText(rootsFromComparison.new) ||
-    joinArticleDisplayText(rootsFromRaw.new);
+    treeOld(rootsFromComparison.new) || treeOld(rootsFromRaw.new);
+
+  const fromComparisonPayload = mergeLawRulePayload(comparisonData);
+  const fromRawPayload =
+    rawData && typeof rawData === 'object'
+      ? (() => {
+          const r = rawData as Record<string, unknown>;
+          if (r.oldAndNew) return mergeLawRulePayload(r.oldAndNew);
+          if (r.admrulOldAndNew) return mergeLawRulePayload(r.admrulOldAndNew);
+          return { oldText: '', newText: '' };
+        })()
+      : { oldText: '', newText: '' };
 
   const oldText =
     (parsedContent.oldHtml && parsedContent.oldHtml.trim()) ||
     (typeof comparisonData.oldText === 'string' && comparisonData.oldText.trim()) ||
+    fromComparisonPayload.oldText ||
     fromTreesOld ||
+    fromRawPayload.oldText ||
     '데이터 없음';
   const newText =
     (parsedContent.newHtml && parsedContent.newHtml.trim()) ||
     (typeof comparisonData.newText === 'string' && comparisonData.newText.trim()) ||
+    fromComparisonPayload.newText ||
     fromTreesNew ||
+    fromRawPayload.newText ||
     '데이터 없음';
 
   return (

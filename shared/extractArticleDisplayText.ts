@@ -56,3 +56,49 @@ export function joinArticleDisplayText(node: unknown): string {
 
   return parts.join('\n\n');
 }
+
+const HANGUL = /[가-힣]/;
+
+function isNoiseString(s: string): boolean {
+  const t = s.trim();
+  if (t.length < 2) return true;
+  if (/^(Y|N|O|X|true|false|null|undefined|\d{1,8})$/i.test(t)) return true;
+  return false;
+}
+
+/**
+ * 조문 키 이름이 API마다 달라 `collectArticleDisplayParts`가 비었을 때,
+ * 트리 아래의 의미 있는 문자열(한글·긴 문장)을 넓게 수집합니다.
+ */
+export function joinArticleDisplayTextDeep(node: unknown): string {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  let totalLen = 0;
+  const MAX_PARTS = 2000;
+  const MAX_TOTAL = 450_000;
+
+  const walk = (n: unknown): void => {
+    if (n == null || out.length >= MAX_PARTS || totalLen >= MAX_TOTAL) return;
+    if (typeof n === 'string') {
+      const t = n.trim();
+      if (isNoiseString(t)) return;
+      if (t.length < 12 && !HANGUL.test(t)) return;
+      if (seen.has(t)) return;
+      seen.add(t);
+      out.push(t);
+      totalLen += t.length + 2;
+      return;
+    }
+    if (typeof n === 'number' || typeof n === 'boolean') return;
+    if (Array.isArray(n)) {
+      for (const item of n) walk(item);
+      return;
+    }
+    if (typeof n === 'object') {
+      for (const v of Object.values(n as Record<string, unknown>)) walk(v);
+    }
+  };
+
+  walk(node);
+  return out.join('\n\n');
+}

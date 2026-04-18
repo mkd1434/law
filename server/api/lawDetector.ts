@@ -4,7 +4,7 @@
  * 2) oldAndNew: 법령ID(또는 MST)로 신·구 조문 본문 조회 후 저장
  */
 
-import { joinArticleDisplayText } from '@shared/extractArticleDisplayText';
+import { toLawContentPayload } from '@shared/oldNewContentPayload';
 import { lawAPIClient } from './lawClient';
 import { upsertChangeLog } from '../db';
 
@@ -210,24 +210,6 @@ export function extractEffectiveDateFromComparison(data: any): string | null {
     console.error('[DateExtractError]', e);
     return null;
   }
-}
-
-export function toLawContentPayload(response: any): { content: string; oldText: string; newText: string } {
-  const svc = response?.OldAndNewService ?? response?.OldAndNew ?? response;
-  const newArticles = svc?.신조문목록 ?? response?.신조문목록 ?? null;
-  const oldArticles = svc?.구조문목록 ?? response?.구조문목록 ?? null;
-
-  const payload = {
-    신조문목록: newArticles,
-    구조문목록: oldArticles,
-  };
-
-  const content = JSON.stringify(payload);
-
-  const oldText = joinArticleDisplayText(oldArticles);
-  const newText = joinArticleDisplayText(newArticles);
-
-  return { content, oldText, newText };
 }
 
 export type MonitoredLawInput = {

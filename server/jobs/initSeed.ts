@@ -14,6 +14,7 @@ import path from 'path';
 import { getDb } from '../db';
 import { monitoredItems } from '../../drizzle/schema';
 import { eq } from 'drizzle-orm';
+import { splitCsvLine } from './lawListCsvParse';
 
 interface LawRecord {
   순번: string;
@@ -32,6 +33,7 @@ interface LawRecord {
 }
 
 interface SeedOptions {
+  /** CSV에서 가져올 법령(law) 최대 개수. 행정규칙 1건은 `fixedRuleName`으로 별도 추가됨. */
   targetCount?: number;
   fixedRuleName?: string;
 }
@@ -84,14 +86,14 @@ function parseCSV(filePath: string): LawRecord[] {
       return [];
     }
 
-    const headers = lines[headerIndex].split(',').map(h => h.trim());
+    const headers = splitCsvLine(lines[headerIndex]).map((h) => h.trim());
     const records: LawRecord[] = [];
 
     for (let i = headerIndex + 1; i < lines.length; i++) {
       const line = lines[i].trim();
       if (!line) continue;
 
-      const values = line.split(',').map(v => v.trim());
+      const values = splitCsvLine(line);
       const record: any = {};
 
       headers.forEach((header, index) => {
@@ -134,14 +136,16 @@ export async function initializeSeedData(options: SeedOptions = {}): Promise<voi
       return;
     }
 
+    /** 모니터링할 법령 개수(행정규칙 1건은 별도 추가) */
     const targetCount = options.targetCount ?? 20;
     const TARGET_RULE_NAME = options.fixedRuleName ?? '전기안전관리자의 직무에 관한 고시';
     const lawRecords = records.filter((record) => determineType(record.법령명.trim()) === 'law');
     const targetRule = records.find((record) => record.법령명.trim() === TARGET_RULE_NAME);
     const targetRecords: LawRecord[] = [
-      ...lawRecords.slice(0, Math.max(targetCount - 1, 0)),
+      ...lawRecords.slice(0, targetCount),
       ...(targetRule ? [targetRule] : []),
     ];
+    const totalTargetSlots = targetCount + (targetRule ? 1 : 0);
 
     if (!targetRule) {
       console.warn(`[InitSeed] ⚠️ 지정된 행정규칙("${TARGET_RULE_NAME}")을 CSV에서 찾지 못했습니다.`);
@@ -182,7 +186,7 @@ export async function initializeSeedData(options: SeedOptions = {}): Promise<voi
       await db.delete(monitoredItems).where(eq(monitoredItems.id, item.id));
     }
     if (extraItems.length > 0) {
-      console.log(`[InitSeed] 🧹 대상 외 항목 ${extraItems.length}개 삭제 (${targetCount}개 원복 정책)`);
+      console.log(`[InitSeed] 🧹 대상 외 항목 ${extraItems.length}개 삭제 (${totalTargetSlots}개 원복 정책)`);
     }
 
     const currentItems = await db.select().from(monitoredItems);
@@ -214,8 +218,8 @@ export async function initializeSeedData(options: SeedOptions = {}): Promise<voi
           continue;
         }
 
-        if (shouldRestrictToUpsertOnly && existingByName.size >= targetCount) {
-          console.log(`[InitSeed] ⏭️ 신규 삽입 스킵(${targetCount}개 제한): ${lawName}`);
+        if (shouldRestrictToUpsertOnly && existingByName.size >= totalTargetSlots) {
+          console.log(`[InitSeed] ⏭️ 신규 삽입 스킵(${totalTargetSlots}개 제한): ${lawName}`);
           continue;
         }
 

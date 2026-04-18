@@ -8,6 +8,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getDb } from '../db';
+import { splitCsvLine } from './lawListCsvParse';
 import { monitoredItems } from '../../drizzle/schema';
 import { syncMonitoredLawsFromChangeHistory } from '../api/lawDetector';
 import { eq } from 'drizzle-orm';
@@ -56,14 +57,14 @@ function parseCSV(filePath: string): LawRecord[] {
     throw new Error('CSV 헤더를 찾을 수 없습니다');
   }
 
-  const headers = lines[headerIndex].split(',').map(h => h.trim());
+  const headers = splitCsvLine(lines[headerIndex]).map((h) => h.trim());
   const records: LawRecord[] = [];
 
   for (let i = headerIndex + 1; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line) continue;
 
-    const values = line.split(',').map(v => v.trim());
+    const values = splitCsvLine(line);
     const record: any = {};
 
     headers.forEach((header, index) => {

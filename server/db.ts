@@ -292,6 +292,26 @@ export async function upsertChangeLog(log: ChangeLogWritePayload) {
     console.log(`[DB] ✅ Successfully saved: ${log.announcementNo}`);
     return result;
   } catch (error) {
+    if (isMysqlUnknownContentColumn(error)) {
+      console.warn(
+        "[DB] upsertChangeLog: `content` 컬럼 없음 — content 없이 재삽입합니다. drizzle 0004 또는 pnpm db:ensure-content 권장."
+      );
+      try {
+        const row: InsertChangeLog = {
+          ...log,
+          comparisonData: serializeLongTextJsonField(log.comparisonData),
+          rawData: serializeLongTextJsonField(log.rawData),
+          content: null,
+        };
+        await db.delete(changeLogs).where(eq(changeLogs.announcementNo, log.announcementNo));
+        const result = await db.insert(changeLogs).values(row);
+        console.log(`[DB] ✅ Successfully saved (no content column): ${log.announcementNo}`);
+        return result;
+      } catch (e2) {
+        console.error(`[DB] ❌ upsertChangeLog 재시도 실패: ${e2}`);
+        throw e2;
+      }
+    }
     console.error(`[DB] ❌ Error in upsertChangeLog: ${error}`);
     throw error;
   }
@@ -321,13 +341,21 @@ export async function updateChangeLog(id: number, updates: Partial<ChangeLogWrit
 export async function getLatestChangeLogForItem(itemId: number) {
   const db = await getDb();
   if (!db) return null;
-  const result = await db
-    .select()
-    .from(changeLogs)
-    .where(eq(changeLogs.itemId, itemId))
-    .orderBy(desc(changeLogs.effectiveDate))
-    .limit(1);
-  return result.length > 0 ? mapChangeLogRow(result[0] as Record<string, unknown>) : null;
+  try {
+    const rows = await executeChangeLogSelect(db, { itemId }, 1, true);
+    const row = rows[0];
+    return row ? mapChangeLogRow(row as Record<string, unknown>) : null;
+  } catch (err) {
+    if (isMysqlUnknownContentColumn(err)) {
+      console.warn(
+        "[DB] getLatestChangeLogForItem: `content` 컬럼 없음 — content 제외로 재조회합니다."
+      );
+      const rows = await executeChangeLogSelect(db, { itemId }, 1, false);
+      const row = rows[0];
+      return row ? mapChangeLogRow({ ...row, content: null } as Record<string, unknown>) : null;
+    }
+    throw err;
+  }
 }
 
 // TODO: add feature queries here as your schema grows.

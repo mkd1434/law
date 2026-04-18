@@ -4,6 +4,7 @@
  * 2) oldAndNew: 법령ID(또는 MST)로 신·구 조문 본문 조회 후 저장
  */
 
+import { joinArticleDisplayText } from '@shared/extractArticleDisplayText';
 import { lawAPIClient } from './lawClient';
 import { upsertChangeLog } from '../db';
 
@@ -223,18 +224,8 @@ export function toLawContentPayload(response: any): { content: string; oldText: 
 
   const content = JSON.stringify(payload);
 
-  const collectHtml = (node: any): string[] => {
-    if (node === null || node === undefined) return [];
-    if (typeof node === 'string') {
-      return node.includes('<') && node.includes('>') ? [node] : [];
-    }
-    if (Array.isArray(node)) return node.flatMap(collectHtml);
-    if (typeof node === 'object') return Object.values(node).flatMap(collectHtml);
-    return [];
-  };
-
-  const oldText = collectHtml(oldArticles).join('\n');
-  const newText = collectHtml(newArticles).join('\n');
+  const oldText = joinArticleDisplayText(oldArticles);
+  const newText = joinArticleDisplayText(newArticles);
 
   return { content, oldText, newText };
 }

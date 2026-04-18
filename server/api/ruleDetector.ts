@@ -6,6 +6,7 @@
  */
 
 import { lawAPIClient } from './lawClient';
+import { joinArticleDisplayText } from '@shared/extractArticleDisplayText';
 import { getSyncLookbackWindowDays } from './lawDetector';
 import { getLatestChangeLogForItem, upsertChangeLog, type ChangeLogWritePayload } from '../db';
 
@@ -118,18 +119,8 @@ export function toRuleContentPayload(response: any): { content: string; oldText:
   const payload = { 신조문목록: newArticles, 구조문목록: oldArticles };
   const content = JSON.stringify(payload);
 
-  const collectHtml = (node: any): string[] => {
-    if (node === null || node === undefined) return [];
-    if (typeof node === 'string') {
-      return node.includes('<') && node.includes('>') ? [node] : [];
-    }
-    if (Array.isArray(node)) return node.flatMap(collectHtml);
-    if (typeof node === 'object') return Object.values(node).flatMap(collectHtml);
-    return [];
-  };
-
-  const oldText = collectHtml(oldArticles).join('\n');
-  const newText = collectHtml(newArticles).join('\n');
+  const oldText = joinArticleDisplayText(oldArticles);
+  const newText = joinArticleDisplayText(newArticles);
   return { content, oldText, newText };
 }
 

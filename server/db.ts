@@ -213,7 +213,12 @@ function isMysqlUnknownContentColumn(err: unknown): boolean {
  */
 export async function getChangeLogs(filters?: ChangeLogSelectFilters) {
   const db = await getDb();
-  if (!db) return [];
+  if (!db) {
+    console.warn(
+      "[DB] getChangeLogs: DB 미연결(DATABASE_URL 없음/연결 실패) — 빈 배열 반환"
+    );
+    return [];
+  }
 
   const parsed = Number(filters?.limit);
   const limitVal = Math.min(Math.max(Number.isFinite(parsed) && parsed > 0 ? parsed : 100, 1), 2000);

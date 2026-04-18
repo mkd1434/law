@@ -134,12 +134,28 @@ export default function Home() {
     };
   }, [allChangeLogs, monitoredItems, searchQuery, selectedTab, itemTypeById]);
 
-  const recentChangesEmptyMessage =
-    searchQuery
-      ? '검색 결과가 없습니다.'
-      : allChangeLogs.length === 0
-        ? '저장된 변경 로그가 없습니다. DB 연결·동기화 작업을 확인해 주세요.'
-        : `조건에 맞는 개정이 없습니다. (저장된 로그 ${allChangeLogs.length}건 — 현재 탭·최근 3년·시행일 기준)`;
+  const recentChangesEmptyMessage = useMemo(() => {
+    if (searchQuery) return '검색 결과가 없습니다.';
+    if (logsError) {
+      const msg = logsError.message ?? '알 수 없는 오류';
+      return `변경 로그 조회에 실패했습니다. 브라우저 콘솔·서버 로그를 확인해 주세요. (${msg})`;
+    }
+    if (allChangeLogs.length === 0) {
+      const hasTargets =
+        allMonitoredForTyping.length > 0 || monitoredItems.length > 0;
+      if (hasTargets) {
+        return '모니터링 대상은 있으나 아직 변경 이력(change_logs)에 저장된 건이 없습니다. 동기화를 실행해 주세요. (예: 서버에서 syncMonitor 잡, 또는 개발용 pnpm sync:test)';
+      }
+      return '변경 로그가 없습니다. 모니터링 대상을 등록한 뒤 동기화를 실행해 주세요.';
+    }
+    return `조건에 맞는 개정이 없습니다. (저장된 로그 ${allChangeLogs.length}건 — 현재 탭·최근 3년·시행일 기준)`;
+  }, [
+    searchQuery,
+    logsError,
+    allChangeLogs.length,
+    allMonitoredForTyping.length,
+    monitoredItems.length,
+  ]);
 
   // 통계 카드 클릭 핸들러
   const handleStatCardClick = (section: ActiveSection) => {

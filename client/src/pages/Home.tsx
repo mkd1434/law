@@ -144,7 +144,7 @@ export default function Home() {
       const hasTargets =
         allMonitoredForTyping.length > 0 || monitoredItems.length > 0;
       if (hasTargets) {
-        return '모니터링 대상은 있으나 아직 변경 이력(change_logs)에 저장된 건이 없습니다. 동기화를 실행해 주세요. (예: 서버에서 syncMonitor 잡, 또는 개발용 pnpm sync:test)';
+        return '모니터링 대상은 있으나 아직 변경 이력(change_logs)에 저장된 건이 없습니다. 서버에서 동기화를 실행해 주세요. (예: pnpm sync — 전체 모니터링 대상, 또는 pnpm sync:test — 법령만 테스트·개발 기본 31일 창)';
       }
       return '변경 로그가 없습니다. 모니터링 대상을 등록한 뒤 동기화를 실행해 주세요.';
     }

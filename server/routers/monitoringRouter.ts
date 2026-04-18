@@ -182,6 +182,9 @@ export const monitoringRouter = router({
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
         console.error('[monitoringRouter] Error fetching change logs:', errorMsg);
+        if (error && typeof error === 'object' && 'cause' in error) {
+          console.error('[monitoringRouter] cause:', (error as any).cause);
+        }
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
           message: '변경 로그 조회에 실패했습니다',

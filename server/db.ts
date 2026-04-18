@@ -172,6 +172,9 @@ export async function getChangeLogs(filters?: { itemId?: number; status?: 'curre
   const db = await getDb();
   if (!db) return [];
 
+  const parsed = Number(filters?.limit);
+  const limitVal = Math.min(Math.max(Number.isFinite(parsed) && parsed > 0 ? parsed : 100, 1), 2000);
+
   const conditions = [];
   if (filters?.itemId !== undefined) {
     conditions.push(eq(changeLogs.itemId, filters.itemId));
@@ -181,10 +184,16 @@ export async function getChangeLogs(filters?: { itemId?: number; status?: 'curre
   }
   const base = db.select().from(changeLogs);
   const filtered = conditions.length > 0 ? base.where(and(...conditions)) : base;
-  const ordered = filtered.orderBy(desc(changeLogs.effectiveDate));
-  const limited = filters?.limit ? ordered.limit(filters.limit) : ordered;
-  const rows = await limited.execute();
-  return (rows as any[]).map((row) => mapChangeLogRow(row));
+  try {
+    const rows = await filtered.orderBy(desc(changeLogs.effectiveDate)).limit(limitVal).execute();
+    return (rows as any[]).map((row) => mapChangeLogRow(row));
+  } catch (err) {
+    console.error("[DB] getChangeLogs SQL error:", err);
+    console.error(
+      "[DB] If the message mentions unknown column, apply drizzle migrations (e.g. 0002 content, 0003 longtext) or pnpm db:push."
+    );
+    throw err;
+  }
 }
 
 /**

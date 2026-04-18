@@ -2,7 +2,7 @@
  * 국가법령정보 API 클라이언트
  *
  * 가이드 기준:
- * - 법령 변경이력: lawSearch.do?target=lsHstInf (기간: startDt·endDt, 또는 단일일 regDt)
+ * - 법령 변경이력: lawSearch.do?target=lsHstInf&regDt=YYYYMMDD (명세: regDt 필수)
  * - 신구법 본문(법령): lawService.do?target=oldAndNew (ID 또는 MST)
  * - 행정규칙 목록: lawSearch.do?target=admrul (query, prmlYd 등)
  * - 신구법 본문(행정규칙): lawService.do?target=admrulOldAndNew (ID=일련번호 또는 LID)
@@ -87,75 +87,7 @@ export class LawAPIClient {
   }
 
   /**
-   * 법령 변경이력 목록 (변경일 기간 startDt~endDt, 페이지네이션)
-   * @see lawSearch.do?target=lsHstInf&startDt=YYYYMMDD&endDt=YYYYMMDD&type=JSON
-   */
-  async getLawChangeHistoryByRange(
-    startDt: string,
-    endDt: string,
-    page: number = 1
-  ): Promise<any> {
-    return withRetry(async () => {
-      await this.rateLimiter.wait();
-
-      const params: Record<string, string | number> = {
-        target: 'lsHstInf',
-        OC: OC_ID,
-        type: 'JSON',
-        startDt,
-        endDt,
-        display: 100,
-        page,
-      };
-
-      console.log(`[LawClient] lsHstInf startDt=${startDt} endDt=${endDt} page=${page}`);
-      const response = await this.client.get('/lawSearch.do', { params });
-
-      if (!response.data) {
-        console.warn(`[LawClient] ⚠️  Empty lsHstInf response for ${startDt}~${endDt}`);
-        return { data: [], totalCnt: 0 };
-      }
-
-      if (response.data.error) {
-        console.error(
-          `[LawClient] ❌ lsHstInf API Error ${startDt}~${endDt}:`,
-          response.data.error
-        );
-        return { data: [], error: response.data.error, totalCnt: 0 };
-      }
-
-      const rows = normalizeLsHstInfList(response.data);
-      const totalCnt = readLsHstInfTotalCnt(response.data);
-      console.log(
-        `[LawClient] ✅ lsHstInf ${startDt}~${endDt} page ${page}: ${rows.length} rows (totalCnt≈${totalCnt})`
-      );
-      return { ...response.data, data: rows, totalCnt };
-    });
-  }
-
-  /** 기간 내 변경이력을 totalCnt·page 기준으로 모두 수집 */
-  async getAllLawChangeHistoryForRange(startDt: string, endDt: string): Promise<any[]> {
-    const all: any[] = [];
-    let page = 1;
-    let totalCnt = 0;
-
-    while (true) {
-      const res = await this.getLawChangeHistoryByRange(startDt, endDt, page);
-      if (!res || res.error) break;
-      const chunk = Array.isArray(res.data) ? res.data : normalizeLsHstInfList(res);
-      if (chunk.length === 0) break;
-      all.push(...chunk);
-      totalCnt = res.totalCnt ?? readLsHstInfTotalCnt(res) ?? totalCnt;
-      if (totalCnt > 0 && all.length >= totalCnt) break;
-      if (chunk.length < 100) break;
-      page += 1;
-    }
-
-    return all;
-  }
-
-  /**
-   * 법령 변경이력 목록 (특정 변경일 regDt만 — 구버전/호환용)
+   * 법령 변경이력 목록 (특정 변경일 regDt, 페이지네이션)
    * @see lawSearch.do?target=lsHstInf&regDt=YYYYMMDD&type=JSON
    */
   async getLawChangeHistoryByDate(regDt: string, page: number = 1): Promise<any> {
@@ -191,7 +123,7 @@ export class LawAPIClient {
     });
   }
 
-  /** regDt 하루치 변경이력 (호환용) */
+  /** regDt 하루치 변경이력 (totalCnt·page 순회) */
   async getAllLawChangeHistoryForDate(regDt: string): Promise<any[]> {
     const all: any[] = [];
     let page = 1;
@@ -323,6 +255,8 @@ export class LawAPIClient {
     date?: string;
     page?: number;
     display?: number;
+    /** 1=현행, 2=연혁 (가이드 nw) */
+    nw?: number;
   }): Promise<any> {
     return withRetry(async () => {
       await this.rateLimiter.wait();
@@ -337,8 +271,11 @@ export class LawAPIClient {
       };
       if (input.prmlYd) params.prmlYd = input.prmlYd;
       if (input.date) params.date = input.date;
+      if (input.nw !== undefined) params.nw = input.nw;
 
-      console.log(`[LawClient] admrul query="${input.query}" page=${params.page}${input.prmlYd ? ` prmlYd=${input.prmlYd}` : ''}`);
+      console.log(
+        `[LawClient] admrul query="${input.query}" page=${params.page}${input.prmlYd ? ` prmlYd=${input.prmlYd}` : ''}${input.nw != null ? ` nw=${input.nw}` : ''}`
+      );
       const response = await this.client.get('/lawSearch.do', { params });
 
       if (!response.data) {
@@ -355,8 +292,8 @@ export class LawAPIClient {
     });
   }
 
-  /** 기간·이름으로 행정규칙 목록 전체 페이지 */
-  async searchAdminRulesAll(input: { query: string; prmlYd: string }): Promise<any[]> {
+  /** prmlYd(발령 기간)~query·nw 로 행정규칙 목록 전체 페이지 */
+  async searchAdminRulesAll(input: { query: string; prmlYd: string; nw?: number }): Promise<any[]> {
     const all: any[] = [];
     let page = 1;
 
@@ -364,6 +301,7 @@ export class LawAPIClient {
       const res = await this.searchAdminRulesPage({
         query: input.query,
         prmlYd: input.prmlYd,
+        nw: input.nw,
         page,
         display: 100,
       });

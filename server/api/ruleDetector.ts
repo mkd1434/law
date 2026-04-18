@@ -25,11 +25,66 @@ function parseYyyymmdd(value: string | number | undefined | null): Date | null {
   return new Date(year, month, day);
 }
 
+function adminRuleRowTitle(row: any): string {
+  const v = row?.행정규칙명 ?? row?.['행정규칙명'] ?? '';
+  return String(v).replace(/\s+/g, ' ').trim();
+}
+
 function monitoredRuleMatchesRow(row: any, ruleName: string): boolean {
-  const n = row?.행정규칙명?.trim?.() ?? '';
-  const q = ruleName.trim();
+  const n = adminRuleRowTitle(row);
+  const q = ruleName.replace(/\s+/g, ' ').trim();
   if (!n || !q) return false;
-  return n === q || n.includes(q) || q.includes(n);
+  const nCompact = n.replace(/\s/g, '');
+  const qCompact = q.replace(/\s/g, '');
+  return (
+    n === q ||
+    n.includes(q) ||
+    q.includes(n) ||
+    nCompact.includes(qCompact) ||
+    qCompact.includes(nCompact)
+  );
+}
+
+/** 검색어 후보: 전체명, 공백제거, 앞 구절 축약 */
+function buildAdmrulQueryCandidates(ruleName: string): string[] {
+  const t = ruleName.trim();
+  const out: string[] = [];
+  const add = (s: string) => {
+    const x = s.trim();
+    if (x && !out.includes(x)) out.push(x);
+  };
+  add(t);
+  add(t.replace(/\s+/g, ''));
+  const m = t.match(/^(.{4,}?)(?:의 직무|에 관한|에 관하여)/);
+  if (m) add(m[1].trim());
+  if (t.length > 12) add(t.slice(0, 12));
+  return out;
+}
+
+async function fetchAdminRulesMatchingName(
+  ruleName: string,
+  prmlYd: string
+): Promise<{ rows: any[]; queryUsed: string; nwUsed: number } | null> {
+  const queries = buildAdmrulQueryCandidates(ruleName);
+  for (const nw of [1, 2] as const) {
+    for (const q of queries) {
+      const raw = await lawAPIClient.searchAdminRulesAll({ query: q, prmlYd, nw });
+      const matched = raw.filter((row: any) => monitoredRuleMatchesRow(row, ruleName));
+      if (matched.length > 0) {
+        return { rows: matched, queryUsed: q, nwUsed: nw };
+      }
+      if (raw.length > 0) {
+        const sample = raw
+          .slice(0, 3)
+          .map((r: any) => adminRuleRowTitle(r))
+          .join(' | ');
+        console.log(
+          `[Rule] admrul ${raw.length} rows (query="${q}" nw=${nw}) — name filter miss; sample: ${sample}`
+        );
+      }
+    }
+  }
+  return null;
 }
 
 function effectiveInMonitoringScope(effective: Date, threeYearsAgo: Date, today: Date): boolean {
@@ -87,21 +142,18 @@ export async function detectAndCollectRuleChanges(
     const endDate = formatDateForAPI(today);
     const prmlYd = `${startDate}~${endDate}`;
 
-    console.log(`[Rule] 📋 admrul query="${ruleName}" prmlYd=${prmlYd}`);
+    console.log(`[Rule] 📋 admrul prmlYd=${prmlYd} (query candidates from name)`);
 
-    const rows = await lawAPIClient.searchAdminRulesAll({
-      query: ruleName,
-      prmlYd,
-    });
-
-    const targetRules = rows.filter((row: any) => monitoredRuleMatchesRow(row, ruleName));
-
-    if (targetRules.length === 0) {
+    const fetched = await fetchAdminRulesMatchingName(ruleName, prmlYd);
+    if (!fetched) {
       console.warn(`[Rule] No matching rules for ${ruleName}`);
       return { detected: 0, collected: 0, errors };
     }
 
-    console.log(`[Rule] ✅ ${targetRules.length} row(s) after name filter`);
+    const targetRules = fetched.rows;
+    console.log(
+      `[Rule] ✅ ${targetRules.length} row(s) (query="${fetched.queryUsed}" nw=${fetched.nwUsed})`
+    );
 
     let latestAnnouncement: Date | null = null;
     if (lastKnownDate) {

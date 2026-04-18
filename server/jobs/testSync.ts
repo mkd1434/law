@@ -2,8 +2,7 @@
  * 법령 데이터 수집 테스트 스크립트
  * 18개 법령에 대해 최근 변경이력을 조회하고 DB에 저장
  *
- * 스캔: lsHstInf startDt~endDt (청크 일수 LAW_LS_HST_RANGE_CHUNK_DAYS, 기본 366)
- * 기간: LAW_CHANGE_HISTORY_LOOKBACK_YEARS / LAW_LS_HST_LOOKBACK_YEARS
+ * 법령: lsHstInf regDt 일 단위, LAW_LS_HST_LOOKBACK_YEARS·LAW_LS_HST_AFTER_DAY_DELAY_MS
  */
 
 import { getDb } from '../db';

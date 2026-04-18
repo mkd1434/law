@@ -74,14 +74,14 @@ export default function Home() {
     const now = new Date();
     const threeYearsAgo = new Date(now.getTime() - 3 * 365 * 24 * 60 * 60 * 1000); // 3년 날짜
 
-    // 모니터링 대상 ID 목록 (선택된 타입)
     const monitoredItemIds = new Set(
       monitoredItems
         .map((item: any) => Number(item.id))
         .filter((id: number) => Number.isFinite(id))
     );
 
-    // 필터링: 3년 이내 + 선택된 타입 + 검색어
+    // 필터링: 3년 이내 + 법령/규칙 탭 + 검색어
+    // monitoredType은 서버에서 monitored_items와 매칭해 붙임(id 타입 불일치 방지).
     const filtered = allChangeLogs.filter((log: any) => {
       const effectiveDate = log.effectiveDate instanceof Date
         ? log.effectiveDate
@@ -89,11 +89,15 @@ export default function Home() {
       const effectiveTime = effectiveDate.getTime();
       const isWithinThreeYears = Number.isFinite(effectiveTime) && effectiveTime >= threeYearsAgo.getTime();
       const logItemId = Number(log.itemId);
-      const isMonitored = Number.isFinite(logItemId) && monitoredItemIds.has(logItemId);
-      const matchesSearch = !searchQuery || 
+      const matchesTab =
+        log.monitoredType === selectedTab ||
+        (log.monitoredType == null &&
+          Number.isFinite(logItemId) &&
+          monitoredItemIds.has(logItemId));
+      const matchesSearch = !searchQuery ||
         log.announcementNo?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         log.lawName?.toLowerCase().includes(searchQuery.toLowerCase());
-      return isWithinThreeYears && isMonitored && matchesSearch;
+      return isWithinThreeYears && matchesTab && matchesSearch;
     });
 
     if (process.env.NODE_ENV === 'development') {

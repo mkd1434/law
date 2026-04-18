@@ -29,6 +29,13 @@
       "when": 1776517657385,
       "tag": "0003_nice_elektra",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1777123200000,
+      "tag": "0004_change_logs_content_if_missing",
+      "breakpoints": true
     }
   ]
 }

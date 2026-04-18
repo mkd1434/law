@@ -165,16 +165,14 @@ export async function deleteMonitoredItem(id: number) {
   return db.delete(monitoredItems).where(eq(monitoredItems.id, id));
 }
 
-/**
- * 변경 로그 조회 (최근 1년 및 미래 시행 예정)
- */
-export async function getChangeLogs(filters?: { itemId?: number; status?: 'current' | 'upcoming'; limit?: number }) {
-  const db = await getDb();
-  if (!db) return [];
+type ChangeLogSelectFilters = { itemId?: number; status?: 'current' | 'upcoming'; limit?: number };
 
-  const parsed = Number(filters?.limit);
-  const limitVal = Math.min(Math.max(Number.isFinite(parsed) && parsed > 0 ? parsed : 100, 1), 2000);
-
+async function executeChangeLogSelect(
+  db: NonNullable<Awaited<ReturnType<typeof getDb>>>,
+  filters: ChangeLogSelectFilters | undefined,
+  limitVal: number,
+  includeContent: boolean
+) {
   const conditions = [];
   if (filters?.itemId !== undefined) {
     conditions.push(eq(changeLogs.itemId, filters.itemId));
@@ -182,12 +180,60 @@ export async function getChangeLogs(filters?: { itemId?: number; status?: 'curre
   if (filters?.status) {
     conditions.push(eq(changeLogs.status, filters.status));
   }
-  const base = db.select().from(changeLogs);
+
+  const base = includeContent
+    ? db.select().from(changeLogs)
+    : db
+        .select({
+          id: changeLogs.id,
+          itemId: changeLogs.itemId,
+          announcementNo: changeLogs.announcementNo,
+          effectiveDate: changeLogs.effectiveDate,
+          status: changeLogs.status,
+          comparisonData: changeLogs.comparisonData,
+          rawData: changeLogs.rawData,
+          createdAt: changeLogs.createdAt,
+          updatedAt: changeLogs.updatedAt,
+        })
+        .from(changeLogs);
+
   const filtered = conditions.length > 0 ? base.where(and(...conditions)) : base;
+  return filtered.orderBy(desc(changeLogs.effectiveDate)).limit(limitVal).execute();
+}
+
+function isMysqlUnknownContentColumn(err: unknown): boolean {
+  const e = err as { cause?: { errno?: number; sqlMessage?: string } };
+  const msg = String(e?.cause?.sqlMessage ?? "");
+  return e?.cause?.errno === 1054 && msg.includes("content");
+}
+
+/**
+ * 변경 로그 조회
+ * content 컬럼이 없는 구 DB면 content 제외 SELECT로 한 번 더 시도(목록 표시용).
+ */
+export async function getChangeLogs(filters?: ChangeLogSelectFilters) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const parsed = Number(filters?.limit);
+  const limitVal = Math.min(Math.max(Number.isFinite(parsed) && parsed > 0 ? parsed : 100, 1), 2000);
+
   try {
-    const rows = await filtered.orderBy(desc(changeLogs.effectiveDate)).limit(limitVal).execute();
+    const rows = await executeChangeLogSelect(db, filters, limitVal, true);
     return (rows as any[]).map((row) => mapChangeLogRow(row));
   } catch (err) {
+    if (isMysqlUnknownContentColumn(err)) {
+      console.warn(
+        "[DB] getChangeLogs: `content` 컬럼 없음 — content 제외로 재조회합니다. 마이그레이션(0002/0004) 적용을 권장합니다."
+      );
+      try {
+        const rows = await executeChangeLogSelect(db, filters, limitVal, false);
+        return (rows as any[]).map((row) => mapChangeLogRow({ ...row, content: null } as any));
+      } catch (err2) {
+        console.error("[DB] getChangeLogs 재조회 실패:", err2);
+        throw err2;
+      }
+    }
     console.error("[DB] getChangeLogs SQL error:", err);
     console.error(
       "[DB] If the message mentions unknown column, apply drizzle migrations (e.g. 0002 content, 0003 longtext) or pnpm db:push."

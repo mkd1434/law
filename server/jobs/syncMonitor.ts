@@ -5,7 +5,10 @@
 
 import { getMonitoredItems } from '../db';
 import {
+  DEV_SYNC_LOOKBACK_DAYS_DEFAULT,
   LAW_CHANGE_HISTORY_LOOKBACK_YEARS,
+  LAW_SYNC_LOOKBACK_DAYS_ENV,
+  getSyncLookbackWindowDays,
   syncMonitoredLawsFromChangeHistory,
 } from '../api/lawDetector';
 import { detectAndCollectRuleChanges } from '../api/ruleDetector';
@@ -65,8 +68,12 @@ export async function runSyncJob(): Promise<void> {
     // Step 3: 법령 — regDt 일 단위 lsHstInf + 모니터링 법령 매칭 → oldAndNew
     if (laws.length > 0) {
       const envLookback = process.env.LAW_LS_HST_LOOKBACK_YEARS;
+      const win = getSyncLookbackWindowDays();
+      const windowHint = win
+        ? `${win.days}d (${win.label})`
+        : `years: ${envLookback ?? LAW_CHANGE_HISTORY_LOOKBACK_YEARS} (production; dev uses ${DEV_SYNC_LOOKBACK_DAYS_DEFAULT}d without env)`;
       console.log(
-        `[SyncJob] Laws: lsHstInf regDt daily (lookback years: ${envLookback ?? LAW_CHANGE_HISTORY_LOOKBACK_YEARS}; LAW_LS_HST_LOOKBACK_YEARS / LAW_LS_HST_AFTER_DAY_DELAY_MS)...`
+        `[SyncJob] Laws: lsHstInf regDt daily (${windowHint}; ${LAW_SYNC_LOOKBACK_DAYS_ENV} / LAW_LS_HST_*)...`
       );
       try {
         const result = await syncMonitoredLawsFromChangeHistory(

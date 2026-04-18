@@ -6,7 +6,20 @@
  */
 
 import { lawAPIClient } from './lawClient';
+import { getSyncLookbackWindowDays } from './lawDetector';
 import { getLatestChangeLogForItem, upsertChangeLog, type ChangeLogWritePayload } from '../db';
+
+/** prmlYd 시작일: getSyncLookbackWindowDays()와 동일(개발 시 기본 31일), 없으면 3년 전 */
+function resolveRulePrmlStart(today: Date): Date {
+  const w = getSyncLookbackWindowDays();
+  if (w) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - w.days);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }
+  return new Date(today.getFullYear() - 3, today.getMonth(), today.getDate());
+}
 
 function formatDateForAPI(date: Date): string {
   const year = date.getFullYear();
@@ -136,13 +149,16 @@ export async function detectAndCollectRuleChanges(
   try {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const threeYearsAgo = new Date(today.getFullYear() - 3, today.getMonth(), today.getDate());
+    const prmlStart = resolveRulePrmlStart(today);
 
-    const startDate = formatDateForAPI(threeYearsAgo);
+    const startDate = formatDateForAPI(prmlStart);
     const endDate = formatDateForAPI(today);
     const prmlYd = `${startDate}~${endDate}`;
 
-    console.log(`[Rule] 📋 admrul prmlYd=${prmlYd} (query candidates from name)`);
+    const win = getSyncLookbackWindowDays();
+    console.log(
+      `[Rule] 📋 admrul prmlYd=${prmlYd} (${win ? `${win.days}d (${win.label})` : 'default 3y production'} + query candidates)`
+    );
 
     const fetched = await fetchAdminRulesMatchingName(ruleName, prmlYd);
     if (!fetched) {
@@ -178,7 +194,7 @@ export async function detectAndCollectRuleChanges(
           continue;
         }
 
-        if (!effectiveInMonitoringScope(eff, threeYearsAgo, today)) {
+        if (!effectiveInMonitoringScope(eff, prmlStart, today)) {
           continue;
         }
 

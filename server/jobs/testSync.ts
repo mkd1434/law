@@ -2,7 +2,10 @@
  * 법령 데이터 수집 테스트 스크립트
  * 18개 법령에 대해 최근 변경이력을 조회하고 DB에 저장
  *
- * 법령: lsHstInf regDt 일 단위, LAW_LS_HST_LOOKBACK_YEARS·LAW_LS_HST_AFTER_DAY_DELAY_MS
+ * 법령: lsHstInf regDt 일 단위.
+ * 개발(`pnpm dev` / `pnpm sync:test`): LAW_SYNC_LOOKBACK_DAYS 없으면 기본 최근 31일만 스캔.
+ * 운영/전체: LAW_SYNC_LOOKBACK_DAYS 비우고 NODE_ENV=production 또는 LAW_LS_HST_LOOKBACK_YEARS.
+ * DB: change_logs에 content 없으면 drizzle 0004 또는 pnpm db:push
  */
 
 import { getDb } from '../db';

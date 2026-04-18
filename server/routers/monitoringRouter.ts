@@ -168,16 +168,26 @@ export const monitoringRouter = router({
           status: input?.status,
           limit: input?.limit || 100,
         });
-        
-        // 각 로그에 lawName 필드 추가 (monitoredItems에서 조회)
-        const items = await getMonitoredItems();
-        const itemMap = new Map(items.map((item: any) => [item.id, item.name]));
-        
-        const enrichedLogs = (logs || []).map((log: any) => ({
-          ...log,
-          lawName: itemMap.get(log.itemId) || '미지정',
-        }));
-        
+
+        const items = (await getMonitoredItems()) as any[];
+        const itemById = new Map<number, { name: string; type: 'law' | 'rule' }>();
+        for (const item of items) {
+          const id = Number(item.id);
+          if (!Number.isFinite(id)) continue;
+          itemById.set(id, { name: item.name, type: item.type });
+        }
+
+        const enrichedLogs = (logs || []).map((log: any) => {
+          const id = Number(log.itemId);
+          const meta = Number.isFinite(id) ? itemById.get(id) : undefined;
+          return {
+            ...log,
+            itemId: Number.isFinite(id) ? id : log.itemId,
+            lawName: meta?.name ?? '미지정',
+            monitoredType: meta?.type ?? null,
+          };
+        });
+
         return enrichedLogs;
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);

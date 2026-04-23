@@ -2,7 +2,8 @@
  * 국가법령정보 API 클라이언트
  *
  * 가이드 기준:
- * - 법령 변경이력: lawSearch.do?target=lsHstInf&regDt=YYYYMMDD (명세: regDt 필수)
+ * - 조문 개정 이력: lawSearch.do?target=lsJoHstInf&fromRegDt=&toRegDt= (기간 조회)
+ * - (레거시) 법령 변경이력 lsHstInf — 유지만 하고 동기화는 lsJoHstInf 사용
  * - 신구법 본문(법령): lawService.do?target=oldAndNew (ID 또는 MST)
  * - 행정규칙 목록: lawSearch.do?target=admrul (query, prmlYd 등)
  * - 신구법 본문(행정규칙): lawService.do?target=admrulOldAndNew (ID=일련번호 또는 LID)
@@ -16,8 +17,10 @@ import axios, { AxiosInstance } from "axios";
 import {
   normalizeAdmrulList,
   normalizeLsHstInfList,
+  normalizeLsJoHstInfList,
   readAdmrulTotalCnt,
   readLsHstInfTotalCnt,
+  readLsJoHstInfTotalCnt,
 } from './lawApiNormalize';
 
 /** 명세 예시는 http이나, 리다이렉트/게이트웨이에서 첫 연결이 ECONNRESET 나는 경우가 있어 https 기본값 */
@@ -161,6 +164,87 @@ export class LawAPIClient {
       if (chunk.length === 0) break;
       all.push(...chunk);
       totalCnt = res.totalCnt ?? readLsHstInfTotalCnt(res) ?? totalCnt;
+      if (totalCnt > 0 && all.length >= totalCnt) break;
+      if (chunk.length < 100) break;
+      page += 1;
+    }
+
+    return all;
+  }
+
+  /**
+   * 조문 개정 이력 (기간). fromRegDt/toRegDt: YYYYMMDD
+   * @see lawSearch.do?target=lsJoHstInf&fromRegDt=&toRegDt=&type=JSON
+   */
+  async getLawJoChangeHistoryRange(
+    fromRegDt: string,
+    toRegDt: string,
+    page: number = 1
+  ): Promise<any> {
+    return withRetry(async () => {
+      await this.rateLimiter.wait();
+
+      const params: Record<string, string | number> = {
+        target: "lsJoHstInf",
+        OC: OC_ID,
+        type: "JSON",
+        fromRegDt,
+        toRegDt,
+        display: 100,
+        page,
+      };
+
+      console.log(
+        `[LawClient] lsJoHstInf from=${fromRegDt} to=${toRegDt} page=${page}`
+      );
+      const response = await this.client.get("/lawSearch.do", { params });
+
+      if (!response.data) {
+        console.warn(
+          `[LawClient] ⚠️  Empty lsJoHstInf ${fromRegDt}~${toRegDt} p${page}`
+        );
+        return { data: [], totalCnt: 0 };
+      }
+
+      if (response.data.error) {
+        console.error(
+          `[LawClient] ❌ lsJoHstInf API Error ${fromRegDt}~${toRegDt}:`,
+          response.data.error
+        );
+        return { data: [], error: response.data.error, totalCnt: 0 };
+      }
+
+      const rows = normalizeLsJoHstInfList(response.data);
+      const totalCnt = readLsJoHstInfTotalCnt(response.data);
+      console.log(
+        `[LawClient] ✅ lsJoHstInf ${fromRegDt}~${toRegDt} p${page}: ${rows.length} rows (totalCnt≈${totalCnt})`
+      );
+      return { ...response.data, data: rows, totalCnt };
+    });
+  }
+
+  /** fromRegDt~toRegDt 구간 전체 페이지 순회 */
+  async getAllLawJoHistoryForRange(
+    fromRegDt: string,
+    toRegDt: string
+  ): Promise<any[]> {
+    const all: any[] = [];
+    let page = 1;
+    let totalCnt = 0;
+
+    while (true) {
+      const res = await this.getLawJoChangeHistoryRange(
+        fromRegDt,
+        toRegDt,
+        page
+      );
+      if (!res || res.error) break;
+      const chunk = Array.isArray(res.data)
+        ? res.data
+        : normalizeLsJoHstInfList(res);
+      if (chunk.length === 0) break;
+      all.push(...chunk);
+      totalCnt = res.totalCnt ?? readLsJoHstInfTotalCnt(res) ?? totalCnt;
       if (totalCnt > 0 && all.length >= totalCnt) break;
       if (chunk.length < 100) break;
       page += 1;

@@ -1,7 +1,7 @@
 /**
  * 법령 개정 감시
- * 1) lsHstInf: 명세상 regDt(변경일) 하루 단위 조회 → 모니터링 법령만 필터
- * 2) oldAndNew: 법령ID(또는 MST)로 신·구 조문 본문 조회 후 저장
+ * 1) lsJoHstInf: fromRegDt~toRegDt 기간 조회를 **달 단위 청크**로 순회 → 모니터링 법령만 필터
+ * 2) (선택) oldAndNew: 법령ID/MST로 신·구 본문 조회 — 실패해도 조문 메타·링크는 저장
  */
 
 import { toLawContentPayload } from '@shared/oldNewContentPayload';
@@ -44,8 +44,8 @@ export function getSyncLookbackWindowDays():
   return null;
 }
 
-/** regDt 하루 처리 후 다음 날로 넘어가기 전 대기(ms). 기본 1000ms. */
-const LS_HST_AFTER_DAY_DELAY_MS = 1000;
+/** lsJoHstInf 월 구간 청크 처리 후 대기(ms). 기본 1000ms. */
+const LS_JO_CHUNK_AFTER_DELAY_MS = 1000;
 
 function resolveLookbackYears(override?: number): number {
   if (typeof override === 'number' && override > 0) {
@@ -90,14 +90,15 @@ function resolveAfterDayDelayMs(override?: { min: number; max: number }): number
     if (override.min >= override.max) return override.min;
     return override.min + Math.floor(Math.random() * (override.max - override.min + 1));
   }
-  const env = process.env.LAW_LS_HST_AFTER_DAY_DELAY_MS;
+  const env =
+    process.env.LAW_LS_JO_CHUNK_DELAY_MS ?? process.env.LAW_LS_HST_AFTER_DAY_DELAY_MS;
   if (env != null && env !== '') {
     const n = parseInt(env, 10);
     if (Number.isFinite(n) && n >= 0) {
       return n;
     }
   }
-  return LS_HST_AFTER_DAY_DELAY_MS;
+  return LS_JO_CHUNK_AFTER_DELAY_MS;
 }
 
 function formatDateForAPI(date: Date): string {
@@ -107,23 +108,10 @@ function formatDateForAPI(date: Date): string {
   return `${year}${month}${day}`;
 }
 
-function formatDateISO(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
 function addDays(d: Date, n: number): Date {
   const x = new Date(d.getTime());
   x.setDate(x.getDate() + n);
   return x;
-}
-
-function countCalendarDaysInclusive(from: Date, to: Date): number {
-  const a = new Date(from.getFullYear(), from.getMonth(), from.getDate()).getTime();
-  const b = new Date(to.getFullYear(), to.getMonth(), to.getDate()).getTime();
-  return Math.floor((b - a) / 86400000) + 1;
 }
 
 async function sleepMs(ms: number): Promise<void> {
@@ -140,8 +128,7 @@ function normalizeDateValue(value: unknown): string | null {
 export type SyncMonitoredLawsFromHistoryOptions = {
   lookbackYears?: number;
   /**
-   * 일별 lsHstInf 묶음 처리 후 다음 regDt 전 대기(ms).
-   * 기본 1000. 테스트 `{ min: 0, max: 0 }`.
+   * 월 단위 lsJoHstInf 청크 처리 후 대기(ms). 기본 1000. 테스트 `{ min: 0, max: 0 }`.
    */
   delayAfterEachRegDtDayMs?: { min: number; max: number };
 };
@@ -155,6 +142,64 @@ function monitoredLawMatchesRow(row: any, monitoredName: string): boolean {
   const name = monitoredName.trim();
   if (!rowName || !name) return false;
   return rowName === name || rowName.includes(name) || name.includes(rowName);
+}
+
+function startOfDay(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+function endOfCalendarMonth(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth() + 1, 0);
+}
+
+function minDate(a: Date, b: Date): Date {
+  return a.getTime() <= b.getTime() ? a : b;
+}
+
+function* eachMonthChunkInWindow(
+  windowStart: Date,
+  today: Date
+): Generator<{ from: Date; to: Date; label: string }> {
+  let cursor = startOfDay(windowStart);
+  const end = startOfDay(today);
+  while (cursor.getTime() <= end.getTime()) {
+    const monthEnd = endOfCalendarMonth(cursor);
+    const to = minDate(monthEnd, end);
+    const label = `${formatDateForAPI(cursor)}~${formatDateForAPI(to)}`;
+    yield { from: new Date(cursor), to: new Date(to), label };
+    cursor = addDays(to, 1);
+  }
+}
+
+/** lsJoHstInf 행 → UI·저장용 조문 메타 (명세 필드명) */
+export function buildJoRevisionMeta(row: any): Record<string, unknown> {
+  if (!row || typeof row !== "object") return {};
+  const r = row as Record<string, unknown>;
+  const detailLink =
+    r["조문변경이력상세링크"] ?? r.조문변경이력상세링크 ?? r["조문변경이력\n상세링크"];
+  return {
+    공포일자: r.공포일자,
+    시행일자: r.시행일자,
+    변경사유: r.변경사유,
+    조문링크: r.조문링크,
+    조문변경이력상세링크: detailLink,
+    조문개정일: r.조문개정일 ?? r["조문제개정일"],
+    조문시행일: r.조문시행일,
+    조문정보: r.조문정보,
+    조문번호: r.조문번호 ?? r["jo num"] ?? r["jo_num"],
+    법령명한글: r.법령명한글,
+    법령ID: r.법령ID,
+  };
+}
+
+function joRowStableParts(row: any): { lawId: string; jo: string; rev: string } {
+  const lawIdRaw = row?.법령ID ?? row?.["법령ID"];
+  const lawId = lawIdRaw != null ? String(lawIdRaw).trim() : "";
+  const joRaw = row?.조문번호 ?? row?.["jo num"] ?? row?.jo_num ?? "";
+  const jo = String(joRaw).replace(/\s/g, "");
+  const rev =
+    normalizeDateValue(row?.조문개정일 ?? row?.["조문제개정일"]) ?? "norev";
+  return { lawId, jo: jo || "jo", rev };
 }
 
 /** oldAndNew JSON에서 시행일자(YYYYMMDD) 추출 — 테스트·UI용 */
@@ -219,8 +264,8 @@ export type MonitoredLawInput = {
 };
 
 /**
- * regDt를 하루씩 돌며 lsHstInf → 모니터링 법령이면 oldAndNew 저장.
- * (페이지마다 LawAPIClient RateLimiter 1초 + 일 단위 처리 후 추가 지연 기본 1초)
+ * lsJoHstInf를 **월 단위 fromRegDt~toRegDt** 청크로 조회 → 모니터링 법령이면 저장.
+ * (페이지마다 RateLimiter + 청크 간 지연 기본 1초)
  */
 export async function syncMonitoredLawsFromChangeHistory(
   laws: MonitoredLawInput[],
@@ -234,31 +279,35 @@ export async function syncMonitoredLawsFromChangeHistory(
     return { detected: 0, collected: 0, errors: [] };
   }
 
-  const afterDayDelay = resolveAfterDayDelayMs(options?.delayAfterEachRegDtDayMs);
+  const chunkDelay = resolveAfterDayDelayMs(options?.delayAfterEachRegDtDayMs);
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const { windowStart, description: windowDesc } = resolveScanWindowStart(today, options);
 
-  const totalDays = countCalendarDaysInclusive(windowStart, today);
-  let dayIndex = 0;
+  const chunks = [...eachMonthChunkInWindow(windowStart, today)];
   const seenKeys = new Set<string>();
 
-  console.log(`[LawSync] window: ${windowDesc} (~${totalDays} regDt day(s))`);
+  console.log(
+    `[LawSync] window: ${windowDesc} — lsJoHstInf in ${chunks.length} month chunk(s)`
+  );
 
-  for (let d = new Date(windowStart); d.getTime() <= today.getTime(); d = addDays(d, 1)) {
-    dayIndex += 1;
-    const regDt = formatDateForAPI(d);
-    const iso = formatDateISO(d);
+  let chunkIndex = 0;
+  for (const { from, to, label } of chunks) {
+    chunkIndex += 1;
+    const fromStr = formatDateForAPI(from);
+    const toStr = formatDateForAPI(to);
 
-    console.log(`[LawSync] lsHstInf regDt=${regDt} (${iso}) day ${dayIndex}/${totalDays}`);
+    console.log(
+      `[LawSync] lsJoHstInf chunk ${chunkIndex}/${chunks.length} ${label} (${fromStr}~${toStr})`
+    );
 
     let rows: any[] = [];
     try {
-      rows = await lawAPIClient.getAllLawChangeHistoryForDate(regDt);
+      rows = await lawAPIClient.getAllLawJoHistoryForRange(fromStr, toStr);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      errors.push(`lsHstInf ${regDt}: ${msg}`);
+      errors.push(`lsJoHstInf ${fromStr}~${toStr}: ${msg}`);
       continue;
     }
 
@@ -266,8 +315,18 @@ export async function syncMonitoredLawsFromChangeHistory(
       const monitored = laws.find((l) => monitoredLawMatchesRow(row, l.name));
       if (!monitored) continue;
 
-      const lawIdRaw = row.법령ID ?? row['법령ID'];
-      const lawId = lawIdRaw != null && String(lawIdRaw).trim() !== '' ? String(lawIdRaw) : undefined;
+      const lawIdRaw = row.법령ID ?? row["법령ID"];
+      const lawId =
+        lawIdRaw != null && String(lawIdRaw).trim() !== ""
+          ? String(lawIdRaw).trim()
+          : undefined;
+
+      const { jo, rev } = joRowStableParts(row);
+      const dedupeKey = `${monitored.itemId}|${lawId ?? monitored.mst}|${jo}|${rev}`;
+      if (seenKeys.has(dedupeKey)) continue;
+      seenKeys.add(dedupeKey);
+
+      detected++;
 
       let comparison: any = null;
       if (lawId) {
@@ -278,29 +337,29 @@ export async function syncMonitoredLawsFromChangeHistory(
       }
 
       if (!comparison) {
-        errors.push(`oldAndNew 실패: ${monitored.name} regDt=${regDt} lawId=${lawId ?? 'n/a'}`);
-        continue;
+        errors.push(
+          `oldAndNew 스킵(조문 메타만 저장): ${monitored.name} lawId=${lawId ?? "n/a"} chunk=${label}`
+        );
       }
 
-      const effectiveFromRow = normalizeDateValue(row.시행일자);
+      const joMeta = buildJoRevisionMeta(row);
       const effectiveDateStr =
-        effectiveFromRow ??
-        extractEffectiveDateFromComparison(comparison) ??
-        normalizeDateValue(comparison?._extractedEffectiveDate);
+        normalizeDateValue(row.조문시행일) ??
+        normalizeDateValue(row.시행일자) ??
+        (comparison
+          ? extractEffectiveDateFromComparison(comparison) ??
+            normalizeDateValue(comparison?._extractedEffectiveDate)
+          : null);
 
       if (!effectiveDateStr) {
-        console.error(`[Law] ❌ 시행일자 없음: ${monitored.name} regDt=${regDt}`);
-        errors.push(`No effective date: ${monitored.name} regDt=${regDt}`);
+        console.error(
+          `[Law] ❌ 조문시행일/시행일자 없음: ${monitored.name} chunk=${label}`
+        );
+        errors.push(`No effective date: ${monitored.name} chunk=${label}`);
         continue;
       }
 
-      const promulgation = normalizeDateValue(row.공포일자) ?? 'unk';
-
-      const dedupeKey = `${monitored.itemId}|${lawId ?? monitored.mst}|${promulgation}|${effectiveDateStr}`;
-      if (seenKeys.has(dedupeKey)) continue;
-      seenKeys.add(dedupeKey);
-
-      detected++;
+      const promulgation = normalizeDateValue(row.공포일자) ?? "unk";
 
       try {
         const year = parseInt(effectiveDateStr.substring(0, 4), 10);
@@ -310,10 +369,19 @@ export async function syncMonitoredLawsFromChangeHistory(
 
         const effDay = new Date(effectiveDate);
         effDay.setHours(0, 0, 0, 0);
-        const status = effDay.getTime() > today.getTime() ? 'upcoming' : 'current';
+        const status = effDay.getTime() > today.getTime() ? "upcoming" : "current";
 
-        const announcementNo = `LS-${lawId ?? monitored.mst}-${promulgation}-${effectiveDateStr}`;
-        const { content, oldText, newText } = toLawContentPayload(comparison);
+        const announcementNo = `JO-${lawId ?? monitored.mst}-${jo}-${rev}-${promulgation}`;
+
+        let content: string | null = null;
+        let oldText = "";
+        let newText = "";
+        if (comparison) {
+          const payload = toLawContentPayload(comparison);
+          content = payload.content;
+          oldText = payload.oldText;
+          newText = payload.newText;
+        }
 
         console.log(`[DB Save] 💾 ${monitored.name} ${announcementNo} status=${status}`);
 
@@ -321,29 +389,31 @@ export async function syncMonitoredLawsFromChangeHistory(
           itemId: monitored.itemId,
           announcementNo,
           effectiveDate,
-          status: status as 'current' | 'upcoming',
+          status: status as "current" | "upcoming",
           comparisonData: {
-            ...comparison,
+            ...(comparison && typeof comparison === "object" ? comparison : {}),
             oldText,
             newText,
-            _sourceRegDt: regDt,
-            _lsHstInfRow: row,
+            joRevisionMeta: joMeta,
+            _lsJoHstInfRow: row,
+            _lsJoChunk: { fromRegDt: fromStr, toRegDt: toStr },
           },
-          content,
-          rawData: { historyRow: row, oldAndNew: comparison },
+          content: content ?? undefined,
+          rawData: { lsJoHstInfRow: row, oldAndNew: comparison },
         });
 
         collected++;
       } catch (saveError) {
-        const saveErrorMsg = saveError instanceof Error ? saveError.message : String(saveError);
+        const saveErrorMsg =
+          saveError instanceof Error ? saveError.message : String(saveError);
         console.error(`[Law] ❌ 저장 실패 ${monitored.name}: ${saveErrorMsg}`);
         errors.push(`Failed to save ${monitored.name}: ${saveErrorMsg}`);
       }
     }
 
-    if (d.getTime() < today.getTime() && afterDayDelay > 0) {
-      console.log(`[LawSync] after regDt=${regDt} sleep ${afterDayDelay}ms`);
-      await sleepMs(afterDayDelay);
+    if (chunkIndex < chunks.length && chunkDelay > 0) {
+      console.log(`[LawSync] after chunk ${label} sleep ${chunkDelay}ms`);
+      await sleepMs(chunkDelay);
     }
   }
 

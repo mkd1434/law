@@ -32,6 +32,31 @@ export function normalizeAdmrulList(payload: any): any[] {
   return [];
 }
 
+/** lsJoHstInf (조문 개정 이력) 목록 — 응답 래핑이 lsHstInf와 유사 */
+export function normalizeLsJoHstInfList(payload: any): any[] {
+  if (!payload) return [];
+  if (Array.isArray(payload.data)) return payload.data;
+  if (Array.isArray(payload.law)) return payload.law;
+
+  const search = payload.LawSearch ?? payload.lawSearch ?? payload;
+  const inf =
+    search?.lsJoHstInf ??
+    search?.LsJoHstInf ??
+    payload.lsJoHstInf ??
+    payload.LsJoHstInf;
+  if (!inf) return [];
+
+  const law = inf.law ?? inf.Law ?? inf;
+  if (Array.isArray(law)) return law;
+  if (law && typeof law === "object") return [law];
+  return [];
+}
+
+/** lsJoHstInf totalCnt (조문이 있는 법령 건수 등 명세 필드) */
+export function readLsJoHstInfTotalCnt(payload: any): number {
+  return readLsHstInfTotalCnt(payload);
+}
+
 /** lsHstInf 응답에서 총 건수 (페이지네이션용) */
 export function readLsHstInfTotalCnt(payload: any): number {
   if (!payload) return 0;

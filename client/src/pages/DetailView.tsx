@@ -12,6 +12,11 @@ import {
   toLawContentPayload,
   toRuleContentPayload,
 } from '@shared/oldNewContentPayload';
+import {
+  getJoRevisionMetaFromChangeLog,
+  resolveLawGoKrUrl,
+  formatYmdKorean,
+} from '@/lib/joRevisionMeta';
 
 function mergeLawRulePayload(envelope: unknown): {
   oldText: string;
@@ -109,6 +114,11 @@ export default function DetailView() {
 
   const comparisonData = changeLog.comparisonData || {};
   const rawData = (changeLog as { rawData?: unknown }).rawData;
+  const joMeta = getJoRevisionMetaFromChangeLog(changeLog);
+  const joDetailLink =
+    joMeta &&
+    (joMeta['조문변경이력상세링크'] ?? joMeta['조문변경이력\n상세링크']);
+  const joArticleLink = joMeta && joMeta['조문링크'];
 
   const parseStoredContent = (rawContent: unknown): { oldHtml: string; newHtml: string } => {
     if (!rawContent || typeof rawContent !== 'string') return { oldHtml: '', newHtml: '' };
@@ -228,6 +238,85 @@ export default function DetailView() {
             </CardContent>
           </Card>
         </div>
+
+        {joMeta ? (
+          <Card className="mt-8 border-indigo-200 bg-indigo-50/40">
+            <CardHeader>
+              <CardTitle className="text-indigo-900">조문 개정 이력</CardTitle>
+              <CardDescription>
+                국가법령정보 lsJoHstInf 조회로 수집한 공포·시행·조문 링크 정보입니다.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
+                <div>
+                  <dt className="text-gray-600">공포일자</dt>
+                  <dd className="font-medium text-gray-900">
+                    {formatYmdKorean(joMeta['공포일자'])}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-gray-600">시행일자 (법령)</dt>
+                  <dd className="font-medium text-gray-900">
+                    {formatYmdKorean(joMeta['시행일자'])}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-gray-600">조문개정일</dt>
+                  <dd className="font-medium text-gray-900">
+                    {formatYmdKorean(joMeta['조문개정일'] ?? joMeta['조문제개정일'])}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-gray-600">조문시행일</dt>
+                  <dd className="font-medium text-gray-900">
+                    {formatYmdKorean(joMeta['조문시행일'])}
+                  </dd>
+                </div>
+                {(joMeta['조문정보'] != null && String(joMeta['조문정보']).trim() !== '') ||
+                (joMeta['조문번호'] != null && String(joMeta['조문번호']).trim() !== '') ? (
+                  <div className="sm:col-span-2">
+                    <dt className="text-gray-600">조문</dt>
+                    <dd className="font-medium text-gray-900">
+                      {String(joMeta['조문정보'] ?? '').trim() ||
+                        (joMeta['조문번호'] != null ? `조문 ${String(joMeta['조문번호'])}` : '—')}
+                    </dd>
+                  </div>
+                ) : null}
+                {joMeta['변경사유'] != null && String(joMeta['변경사유']).trim() !== '' ? (
+                  <div className="sm:col-span-2">
+                    <dt className="text-gray-600">변경사유</dt>
+                    <dd className="font-medium text-gray-900 whitespace-pre-wrap">
+                      {String(joMeta['변경사유'])}
+                    </dd>
+                  </div>
+                ) : null}
+              </dl>
+              <div className="flex flex-wrap gap-3 pt-2">
+                {resolveLawGoKrUrl(joArticleLink as string | undefined) ? (
+                  <a
+                    href={resolveLawGoKrUrl(joArticleLink as string) ?? '#'}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm font-medium text-indigo-700 underline hover:text-indigo-900"
+                  >
+                    조문 링크 (law.go.kr)
+                  </a>
+                ) : null}
+                {resolveLawGoKrUrl(joDetailLink as string | undefined) ? (
+                  <a
+                    href={resolveLawGoKrUrl(joDetailLink as string) ?? '#'}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm font-medium text-indigo-700 underline hover:text-indigo-900"
+                  >
+                    조문 변경이력 상세
+                  </a>
+                ) : null}
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
 
         {/* 상세 정보 */}
         <Card className="mt-8">

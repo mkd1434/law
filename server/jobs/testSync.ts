@@ -2,7 +2,7 @@
  * 법령 데이터 수집 테스트 스크립트
  * 18개 법령에 대해 최근 변경이력을 조회하고 DB에 저장
  *
- * 법령: lsHstInf regDt 일 단위.
+ * 법령: lsJoHstInf fromRegDt~toRegDt (월 단위 청크).
  * 개발(`pnpm dev` / `pnpm sync:test`): LAW_SYNC_LOOKBACK_DAYS 없으면 기본 최근 31일만 스캔.
  * 운영/전체: LAW_SYNC_LOOKBACK_DAYS 비우고 NODE_ENV=production 또는 LAW_LS_HST_LOOKBACK_YEARS.
  * DB: change_logs에 content 없으면 pnpm db:ensure-content 또는 pnpm db:push
@@ -42,7 +42,7 @@ async function runTestSync() {
       name: item.name,
     }));
 
-    console.log('[TestSync] lsHstInf 일괄 스캔 시작...\n');
+    console.log('[TestSync] lsJoHstInf 월 구간 일괄 스캔 시작...\n');
     let totalDetected = 0;
     let totalCollected = 0;
     const allErrors: string[] = [];

@@ -42,7 +42,7 @@ describe('lawDetector — 시행일자 추출 (oldAndNew)', () => {
   });
 });
 
-describe('lawDetector — lsHstInf regDt 일 단위 → oldAndNew', () => {
+describe('lawDetector — lsJoHstInf 월 구간 → oldAndNew·조문 메타', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
@@ -55,7 +55,7 @@ describe('lawDetector — lsHstInf regDt 일 단위 → oldAndNew', () => {
     vi.restoreAllMocks();
   });
 
-  it('특정 regDt에 매칭되는 행만 oldAndNew 저장', async () => {
+  it('해당 월 구간에 매칭되는 조문 이력만 oldAndNew·joRevisionMeta 저장', async () => {
     const mockComparison = {
       OldAndNewService: {
         신조문_기본정보: { 시행일자: '20230808' },
@@ -64,14 +64,19 @@ describe('lawDetector — lsHstInf regDt 일 단위 → oldAndNew', () => {
       },
     };
 
-    const getAll = vi.fn(async (regDt: string) => {
-      if (regDt === '20240401') {
+    const getAllJo = vi.fn(async (fromStr: string, toStr: string) => {
+      if (fromStr === '20240401' && toStr === '20240430') {
         return [
           {
             법령명한글: '전기공사업법',
             법령ID: '282333',
             공포일자: 20240401,
             시행일자: 20230808,
+            조문번호: '3',
+            조문개정일: '20240401',
+            조문시행일: '20230808',
+            변경사유: '일부개정',
+            조문정보: '제3조',
           },
         ];
       }
@@ -82,9 +87,10 @@ describe('lawDetector — lsHstInf regDt 일 단위 → oldAndNew', () => {
     const mockUpsert = vi.spyOn(db, 'upsertChangeLog').mockResolvedValue(undefined as any);
 
     vi.spyOn(lawClient, 'lawAPIClient', 'get').mockReturnValue({
-      getAllLawChangeHistoryForDate: getAll,
+      getAllLawJoHistoryForRange: getAllJo,
       getLawComparison,
       getLawChangeHistoryByDate: vi.fn(),
+      getAllLawChangeHistoryForDate: vi.fn(),
       searchAdminRulesPage: vi.fn(),
       searchAdminRulesAll: vi.fn(),
       getAdminRuleComparison: vi.fn(),
@@ -102,7 +108,10 @@ describe('lawDetector — lsHstInf regDt 일 단위 → oldAndNew', () => {
     expect(getLawComparison).toHaveBeenCalledWith({ lawId: '282333' });
     expect(mockUpsert).toHaveBeenCalledOnce();
     const arg = mockUpsert.mock.calls[0][0];
-    expect(arg.announcementNo).toMatch(/^LS-282333-20240401-20230808$/);
+    expect(arg.announcementNo).toMatch(/^JO-282333-3-20240401-20240401$/);
     expect(arg.content).toContain('신조문목록');
+    expect(arg.comparisonData).toMatchObject({
+      joRevisionMeta: expect.objectContaining({ 조문번호: '3', 변경사유: '일부개정' }),
+    });
   });
 });

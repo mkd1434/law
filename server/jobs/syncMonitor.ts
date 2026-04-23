@@ -65,7 +65,7 @@ export async function runSyncJob(): Promise<void> {
       });
     }
 
-    // Step 3: 법령 — regDt 일 단위 lsHstInf + 모니터링 법령 매칭 → oldAndNew
+    // Step 3: 법령 — lsJoHstInf 기간 조회(월 단위 청크) + 모니터링 법령 매칭 → 조문 메타 저장, oldAndNew는 가능 시
     if (laws.length > 0) {
       const envLookback = process.env.LAW_LS_HST_LOOKBACK_YEARS;
       const win = getSyncLookbackWindowDays();
@@ -73,7 +73,7 @@ export async function runSyncJob(): Promise<void> {
         ? `${win.days}d (${win.label})`
         : `years: ${envLookback ?? LAW_CHANGE_HISTORY_LOOKBACK_YEARS} (production; dev uses ${DEV_SYNC_LOOKBACK_DAYS_DEFAULT}d without env)`;
       console.log(
-        `[SyncJob] Laws: lsHstInf regDt daily (${windowHint}; ${LAW_SYNC_LOOKBACK_DAYS_ENV} / LAW_LS_HST_*)...`
+        `[SyncJob] Laws: lsJoHstInf monthly chunks (${windowHint}; ${LAW_SYNC_LOOKBACK_DAYS_ENV} / LAW_LS_HST_* / LAW_LS_JO_CHUNK_DELAY_MS)...`
       );
       try {
         const result = await syncMonitoredLawsFromChangeHistory(

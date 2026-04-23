@@ -6,6 +6,11 @@ import { Badge } from '@/components/ui/badge';
 import { Loader2, FileText, AlertCircle, CheckCircle2, Search, ChevronDown, ChevronUp, X } from 'lucide-react';
 import { trpc } from '@/lib/trpc';
 import { Link } from 'wouter';
+import {
+  getJoRevisionMetaFromChangeLog,
+  formatYmdKorean,
+  truncateText,
+} from '@/lib/joRevisionMeta';
 
 const formatDate = (date: Date | string): string => {
   if (!date) return '미정';
@@ -18,6 +23,33 @@ const formatDate = (date: Date | string): string => {
 
 
 type ActiveSection = 'monitored' | 'current' | 'upcoming' | null;
+
+function ChangeLogJoSummary({ log }: { log: Record<string, unknown> }) {
+  const meta = getJoRevisionMetaFromChangeLog(log);
+  if (!meta) return null;
+  const article =
+    (meta['조문정보'] as string | undefined)?.trim() ||
+    (meta['조문번호'] != null && String(meta['조문번호']).trim() !== ''
+      ? `조문 ${String(meta['조문번호'])}`
+      : '');
+  const rev = formatYmdKorean(meta['조문개정일'] ?? meta['조문제개정일']);
+  const effJo = formatYmdKorean(meta['조문시행일']);
+  const reason = meta['변경사유'];
+  const reasonStr =
+    reason != null && String(reason).trim()
+      ? truncateText(String(reason), 100)
+      : null;
+  return (
+    <div className="mt-2 space-y-0.5 text-xs text-gray-600">
+      {article ? <p>조문: {article}</p> : null}
+      <p>
+        조문개정일 {rev}
+        {effJo !== '—' ? ` · 조문시행일 ${effJo}` : ''}
+      </p>
+      {reasonStr ? <p className="text-gray-500">변경사유: {reasonStr}</p> : null}
+    </div>
+  );
+}
 
 /**
  * 법령 및 행정규칙 통합 모니터링 시스템 - 메인 페이지
@@ -330,6 +362,7 @@ export default function Home() {
                                 <p className="text-sm text-gray-600">
                                   시행일: {new Date(log.effectiveDate).toLocaleDateString('ko-KR')}
                                 </p>
+                                <ChangeLogJoSummary log={log} />
                               </div>
                               <Badge variant="secondary">현행</Badge>
                             </div>
@@ -378,6 +411,7 @@ export default function Home() {
                                 <p className="text-sm text-gray-600">
                                   시행일: {new Date(log.effectiveDate).toLocaleDateString('ko-KR')}
                                 </p>
+                                <ChangeLogJoSummary log={log} />
                               </div>
                               <Badge className="bg-orange-600 hover:bg-orange-700">시행 예정</Badge>
                             </div>
@@ -527,6 +561,7 @@ export default function Home() {
                                 <p className="text-sm text-gray-600">
                                   시행일: {new Date(log.effectiveDate).toLocaleDateString('ko-KR')}
                                 </p>
+                                <ChangeLogJoSummary log={log} />
                               </div>
                               <Badge variant="secondary">현행</Badge>
                             </div>
@@ -575,6 +610,7 @@ export default function Home() {
                                 <p className="text-sm text-gray-600">
                                   시행일: {new Date(log.effectiveDate).toLocaleDateString('ko-KR')}
                                 </p>
+                                <ChangeLogJoSummary log={log} />
                               </div>
                               <Badge className="bg-orange-600 hover:bg-orange-700">시행 예정</Badge>
                             </div>

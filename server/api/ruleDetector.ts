@@ -10,7 +10,7 @@ import { toRuleContentPayload } from '@shared/oldNewContentPayload';
 import { getSyncLookbackWindowDays } from './lawDetector';
 import { getLatestChangeLogForItem, upsertChangeLog, type ChangeLogWritePayload } from '../db';
 
-/** prmlYd 시작일: getSyncLookbackWindowDays()와 동일(개발 시 기본 31일), 없으면 3년 전 */
+/** prmlYd 시작일: getSyncLookbackWindowDays()와 동일(개발 시 기본 365일), 없으면 3년 전 */
 function resolveRulePrmlStart(today: Date): Date {
   const w = getSyncLookbackWindowDays();
   if (w) {

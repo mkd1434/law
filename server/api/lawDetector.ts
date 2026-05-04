@@ -13,13 +13,13 @@ export const LAW_CHANGE_HISTORY_LOOKBACK_YEARS = 1;
 
 /**
  * 실험/개발용: 오늘부터 **며칠 전까지**만 regDt 루프 (법령·행정규칙 prmlYd 동일).
- * `LAW_SYNC_LOOKBACK_DAYS`가 있으면 그걸 쓰고, **없고 NODE_ENV=development면 기본 31일**.
+ * `LAW_SYNC_LOOKBACK_DAYS`가 있으면 그걸 쓰고, **없고 NODE_ENV=development면 기본 365일**.
  * 운영에서는 비우면 `LAW_LS_HST_LOOKBACK_YEARS`(년) 또는 행정규칙 3년 구간을 씀.
  */
 export const LAW_SYNC_LOOKBACK_DAYS_ENV = 'LAW_SYNC_LOOKBACK_DAYS';
 
-/** 개발 모드에서만 쓰는 기본 스캔 일수 */
-export const DEV_SYNC_LOOKBACK_DAYS_DEFAULT = 31;
+/** 개발 모드에서만 쓰는 기본 스캔 일수 (연 단위 lsJoHstInf 청크와 맞추려면 1년 이상이 자연스러움) */
+export const DEV_SYNC_LOOKBACK_DAYS_DEFAULT = 365;
 
 /** 일 단위 스캔 구간이 있으면 { days, label }, 없으면 null(년/3년 로직으로 폴백) */
 export function getSyncLookbackWindowDays():

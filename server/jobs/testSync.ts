@@ -3,7 +3,7 @@
  * 18개 법령에 대해 최근 변경이력을 조회하고 DB에 저장
  *
  * 법령: lsJoHstInf fromRegDt~toRegDt (연 단위 청크).
- * 개발(`pnpm dev` / `pnpm sync:test`): LAW_SYNC_LOOKBACK_DAYS 없으면 기본 최근 31일만 스캔.
+ * 개발(`pnpm dev` / `pnpm sync:test`): LAW_SYNC_LOOKBACK_DAYS 없으면 기본 최근 365일 스캔.
  * 운영/전체: LAW_SYNC_LOOKBACK_DAYS 비우고 NODE_ENV=production 또는 LAW_LS_HST_LOOKBACK_YEARS.
  * DB: change_logs에 content 없으면 pnpm db:ensure-content 또는 pnpm db:push
  */

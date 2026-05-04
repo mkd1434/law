@@ -1,12 +1,13 @@
 /**
  * 법령 개정 감시
  * 1) lsJoHstInf: fromRegDt~toRegDt 기간 조회를 **연 단위 청크**로 순회 → 모니터링 법령만 필터
- *    (행의 **법령MST/법령ID 등 = 모니터링 externalId(=CSV 법령MST)** 우선 매칭, 명칭은 보조)
- * 2) (선택) oldAndNew: 법령ID/MST로 신·구 본문 조회 — 실패해도 조문 메타·링크는 저장
+ *    (행의 법령MST/법령ID 등 = 모니터링 externalId, 보통 CSV 법령ID) 우선 매칭, 명칭은 보조
+ * 2) oldAndNew: 행에 시행·공포일이 없을 때만 조회(속도). 있으면 조문 메타만으로 저장.
  */
 
 import { toLawContentPayload } from '@shared/oldNewContentPayload';
 import { lawAPIClient } from './lawClient';
+import { normalizeLsJoHstInfList, readLsJoHstInfTotalCnt } from './lawApiNormalize';
 import { upsertChangeLog } from '../db';
 
 /** lsHstInf 스캔 기간(오늘 기준 과거 몇 년). `LAW_LS_HST_LOOKBACK_YEARS` 환경변수 우선. */
@@ -353,127 +354,177 @@ export async function syncMonitoredLawsFromChangeHistory(
       `[LawSync] lsJoHstInf chunk ${chunkIndex}/${chunks.length} ${label} (${fromStr}~${toStr})`
     );
 
-    let rows: any[] = [];
+    let page = 1;
+    let totalCntReported = 0;
+    let rowsRead = 0;
+    let rowsMatchingMonitored = 0;
+    let sampleRowForDebug: any = null;
+
     try {
-      rows = await lawAPIClient.getAllLawJoHistoryForRange(fromStr, toStr);
+      while (true) {
+        const res = await lawAPIClient.getLawJoChangeHistoryRange(
+          fromStr,
+          toStr,
+          page
+        );
+        if (!res || res.error) {
+          if (res?.error) {
+            errors.push(
+              `lsJoHstInf ${fromStr}~${toStr} p${page}: ${typeof res.error === "string" ? res.error : JSON.stringify(res.error)}`
+            );
+          }
+          break;
+        }
+
+        const chunk = Array.isArray(res.data)
+          ? res.data
+          : normalizeLsJoHstInfList(res);
+        if (chunk.length === 0) break;
+
+        if (sampleRowForDebug == null && chunk[0]) {
+          sampleRowForDebug = chunk[0];
+        }
+
+        totalCntReported =
+          res.totalCnt ?? readLsJoHstInfTotalCnt(res) ?? totalCntReported;
+        rowsRead += chunk.length;
+
+        for (const row of chunk) {
+          const monitored = laws.find((l) => matchMonitoredLawRow(row, l));
+          if (!monitored) continue;
+          rowsMatchingMonitored += 1;
+
+          const lawIdRaw = row.법령ID ?? row["법령ID"];
+          const lawId =
+            lawIdRaw != null && String(lawIdRaw).trim() !== ""
+              ? String(lawIdRaw).trim()
+              : undefined;
+
+          const { jo, rev } = joRowStableParts(row);
+          const dedupeKey = `${monitored.itemId}|${lawId ?? monitored.mst}|${jo}|${rev}`;
+          if (seenKeys.has(dedupeKey)) continue;
+          seenKeys.add(dedupeKey);
+
+          detected++;
+
+          const effectiveFromRow =
+            normalizeDateValue(row.조문시행일) ??
+            normalizeDateValue(row.조문시행일자) ??
+            normalizeDateValue(row.시행일자) ??
+            normalizeDateValue(row.공포일자);
+
+          let comparison: any = null;
+          if (!effectiveFromRow) {
+            if (lawId) {
+              comparison = await lawAPIClient.getLawComparison({ lawId });
+            }
+            if (!comparison && monitored.mst) {
+              comparison = await lawAPIClient.getLawComparison({ mst: monitored.mst });
+            }
+            if (!comparison) {
+              errors.push(
+                `oldAndNew 필요(행에 시행·공포일 없음) 실패: ${monitored.name} lawId=${lawId ?? "n/a"} chunk=${label}`
+              );
+            }
+          }
+
+          const joMeta = buildJoRevisionMeta(row);
+          const effectiveDateStr =
+            effectiveFromRow ??
+            (comparison
+              ? extractEffectiveDateFromComparison(comparison) ??
+                normalizeDateValue(comparison?._extractedEffectiveDate)
+              : null);
+
+          if (!effectiveDateStr) {
+            console.error(
+              `[Law] ❌ 조문시행일/시행일자 없음: ${monitored.name} chunk=${label}`
+            );
+            errors.push(`No effective date: ${monitored.name} chunk=${label}`);
+            continue;
+          }
+
+          const promulgation = normalizeDateValue(row.공포일자) ?? "unk";
+
+          try {
+            const year = parseInt(effectiveDateStr.substring(0, 4), 10);
+            const month = parseInt(effectiveDateStr.substring(4, 6), 10);
+            const day = parseInt(effectiveDateStr.substring(6, 8), 10);
+            const effectiveDate = new Date(year, month - 1, day);
+
+            const effDay = new Date(effectiveDate);
+            effDay.setHours(0, 0, 0, 0);
+            const status =
+              effDay.getTime() > today.getTime() ? "upcoming" : "current";
+
+            const announcementNo = `JO-${lawId ?? monitored.mst}-${jo}-${rev}-${promulgation}`;
+
+            let content: string | null = null;
+            let oldText = "";
+            let newText = "";
+            if (comparison) {
+              const payload = toLawContentPayload(comparison);
+              content = payload.content;
+              oldText = payload.oldText;
+              newText = payload.newText;
+            }
+
+            console.log(
+              `[DB Save] 💾 ${monitored.name} ${announcementNo} status=${status}`
+            );
+
+            await upsertChangeLog({
+              itemId: monitored.itemId,
+              announcementNo,
+              effectiveDate,
+              status: status as "current" | "upcoming",
+              comparisonData: {
+                ...(comparison && typeof comparison === "object" ? comparison : {}),
+                oldText,
+                newText,
+                joRevisionMeta: joMeta,
+                _lsJoHstInfRow: row,
+                _lsJoChunk: { fromRegDt: fromStr, toRegDt: toStr },
+              },
+              content: content ?? undefined,
+              rawData: { lsJoHstInfRow: row, oldAndNew: comparison },
+            });
+
+            collected++;
+          } catch (saveError) {
+            const saveErrorMsg =
+              saveError instanceof Error ? saveError.message : String(saveError);
+            console.error(`[Law] ❌ 저장 실패 ${monitored.name}: ${saveErrorMsg}`);
+            errors.push(`Failed to save ${monitored.name}: ${saveErrorMsg}`);
+          }
+        }
+
+        console.log(
+          `[LawSync] lsJoHstInf ${label} page ${page}: +${chunk.length} rows (cum ${rowsRead}/${totalCntReported || "?"}), matchedRows=${rowsMatchingMonitored}, collected=${collected}`
+        );
+
+        if (totalCntReported > 0 && rowsRead >= totalCntReported) break;
+        if (chunk.length < 100) break;
+        if (page >= 200) {
+          console.warn(
+            `[LawSync] lsJoHstInf pagination safety stop at page ${page}`
+          );
+          break;
+        }
+        page += 1;
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       errors.push(`lsJoHstInf ${fromStr}~${toStr}: ${msg}`);
-      continue;
-    }
-
-    let rowsMatchingMonitored = 0;
-    for (const row of rows) {
-      const monitored = laws.find((l) => matchMonitoredLawRow(row, l));
-      if (!monitored) continue;
-      rowsMatchingMonitored += 1;
-
-      const lawIdRaw = row.법령ID ?? row["법령ID"];
-      const lawId =
-        lawIdRaw != null && String(lawIdRaw).trim() !== ""
-          ? String(lawIdRaw).trim()
-          : undefined;
-
-      const { jo, rev } = joRowStableParts(row);
-      const dedupeKey = `${monitored.itemId}|${lawId ?? monitored.mst}|${jo}|${rev}`;
-      if (seenKeys.has(dedupeKey)) continue;
-      seenKeys.add(dedupeKey);
-
-      detected++;
-
-      let comparison: any = null;
-      if (lawId) {
-        comparison = await lawAPIClient.getLawComparison({ lawId });
-      }
-      if (!comparison && monitored.mst) {
-        comparison = await lawAPIClient.getLawComparison({ mst: monitored.mst });
-      }
-
-      if (!comparison) {
-        errors.push(
-          `oldAndNew 스킵(조문 메타만 저장): ${monitored.name} lawId=${lawId ?? "n/a"} chunk=${label}`
-        );
-      }
-
-      const joMeta = buildJoRevisionMeta(row);
-      const effectiveDateStr =
-        normalizeDateValue(row.조문시행일) ??
-        normalizeDateValue(row.조문시행일자) ??
-        normalizeDateValue(row.시행일자) ??
-        normalizeDateValue(row.공포일자) ??
-        (comparison
-          ? extractEffectiveDateFromComparison(comparison) ??
-            normalizeDateValue(comparison?._extractedEffectiveDate)
-          : null);
-
-      if (!effectiveDateStr) {
-        console.error(
-          `[Law] ❌ 조문시행일/시행일자 없음: ${monitored.name} chunk=${label}`
-        );
-        errors.push(`No effective date: ${monitored.name} chunk=${label}`);
-        continue;
-      }
-
-      const promulgation = normalizeDateValue(row.공포일자) ?? "unk";
-
-      try {
-        const year = parseInt(effectiveDateStr.substring(0, 4), 10);
-        const month = parseInt(effectiveDateStr.substring(4, 6), 10);
-        const day = parseInt(effectiveDateStr.substring(6, 8), 10);
-        const effectiveDate = new Date(year, month - 1, day);
-
-        const effDay = new Date(effectiveDate);
-        effDay.setHours(0, 0, 0, 0);
-        const status = effDay.getTime() > today.getTime() ? "upcoming" : "current";
-
-        const announcementNo = `JO-${lawId ?? monitored.mst}-${jo}-${rev}-${promulgation}`;
-
-        let content: string | null = null;
-        let oldText = "";
-        let newText = "";
-        if (comparison) {
-          const payload = toLawContentPayload(comparison);
-          content = payload.content;
-          oldText = payload.oldText;
-          newText = payload.newText;
-        }
-
-        console.log(`[DB Save] 💾 ${monitored.name} ${announcementNo} status=${status}`);
-
-        await upsertChangeLog({
-          itemId: monitored.itemId,
-          announcementNo,
-          effectiveDate,
-          status: status as "current" | "upcoming",
-          comparisonData: {
-            ...(comparison && typeof comparison === "object" ? comparison : {}),
-            oldText,
-            newText,
-            joRevisionMeta: joMeta,
-            _lsJoHstInfRow: row,
-            _lsJoChunk: { fromRegDt: fromStr, toRegDt: toStr },
-          },
-          content: content ?? undefined,
-          rawData: { lsJoHstInfRow: row, oldAndNew: comparison },
-        });
-
-        collected++;
-      } catch (saveError) {
-        const saveErrorMsg =
-          saveError instanceof Error ? saveError.message : String(saveError);
-        console.error(`[Law] ❌ 저장 실패 ${monitored.name}: ${saveErrorMsg}`);
-        errors.push(`Failed to save ${monitored.name}: ${saveErrorMsg}`);
-      }
     }
 
     console.log(
-      `[LawSync] chunk ${label} summary: apiRows=${rows.length}, rowsForMonitoredLaws=${rowsMatchingMonitored}`
+      `[LawSync] chunk ${label} summary: apiRows=${rowsRead}, rowsForMonitoredLaws=${rowsMatchingMonitored}`
     );
-    if (rows.length > 0 && rowsMatchingMonitored === 0) {
-      const sample = rows[0];
+    if (rowsRead > 0 && rowsMatchingMonitored === 0) {
       const keys =
-        sample && typeof sample === "object"
-          ? Object.keys(sample as object).slice(0, 25).join(", ")
+        sampleRowForDebug && typeof sampleRowForDebug === "object"
+          ? Object.keys(sampleRowForDebug as object).slice(0, 25).join(", ")
           : "(no row)";
       console.warn(
         `[LawSync] no row matched monitored laws in this chunk — sample row keys: ${keys}`

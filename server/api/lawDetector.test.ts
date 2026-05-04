@@ -42,6 +42,16 @@ describe('lawDetector — 시행일자 추출 (oldAndNew)', () => {
   });
 });
 
+/** lsJoHstInf는 페이지 단위로 조회하므로 getLawJoChangeHistoryRange를 목업한다 */
+function mockLsJoChangeHistoryRange(rows: any[]) {
+  return vi.fn(async (_from: string, _to: string, page: number) => {
+    if (page === 1) {
+      return { data: rows, totalCnt: rows.length };
+    }
+    return { data: [], totalCnt: rows.length };
+  });
+}
+
 describe('lawDetector — lsJoHstInf 연 구간 → oldAndNew·조문 메타', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -64,30 +74,23 @@ describe('lawDetector — lsJoHstInf 연 구간 → oldAndNew·조문 메타', (
       },
     };
 
-    const getAllJo = vi.fn(async (fromStr: string, toStr: string) => {
-      if (fromStr === '20240101' && toStr === '20241231') {
-        return [
-          {
-            법령명한글: '전기공사업법',
-            법령ID: '285',
-            공포일자: 20240401,
-            시행일자: 20230808,
-            조문번호: '3',
-            조문개정일: '20240401',
-            조문시행일: '20230808',
-            변경사유: '일부개정',
-            조문정보: '제3조',
-          },
-        ];
-      }
-      return [];
-    });
+    const lsJoRows = [
+      {
+        법령명한글: '전기공사업법',
+        법령ID: '285',
+        조문번호: '3',
+        조문개정일: '20240401',
+        변경사유: '일부개정',
+        조문정보: '제3조',
+      },
+    ];
 
     const getLawComparison = vi.fn().mockResolvedValue(mockComparison);
     const mockUpsert = vi.spyOn(db, 'upsertChangeLog').mockResolvedValue(undefined as any);
 
     vi.spyOn(lawClient, 'lawAPIClient', 'get').mockReturnValue({
-      getAllLawJoHistoryForRange: getAllJo,
+      getLawJoChangeHistoryRange: mockLsJoChangeHistoryRange(lsJoRows),
+      getAllLawJoHistoryForRange: vi.fn(),
       getLawComparison,
       getLawChangeHistoryByDate: vi.fn(),
       getAllLawChangeHistoryForDate: vi.fn(),
@@ -108,7 +111,7 @@ describe('lawDetector — lsJoHstInf 연 구간 → oldAndNew·조문 메타', (
     expect(getLawComparison).toHaveBeenCalledWith({ lawId: '285' });
     expect(mockUpsert).toHaveBeenCalledOnce();
     const arg = mockUpsert.mock.calls[0][0];
-    expect(arg.announcementNo).toMatch(/^JO-285-3-20240401-20240401$/);
+    expect(arg.announcementNo).toMatch(/^JO-285-3-20240401-unk$/);
     expect(arg.content).toContain('신조문목록');
     expect(arg.comparisonData).toMatchObject({
       joRevisionMeta: expect.objectContaining({ 조문번호: '3', 변경사유: '일부개정' }),
@@ -124,28 +127,24 @@ describe('lawDetector — lsJoHstInf 연 구간 → oldAndNew·조문 메타', (
       },
     };
 
-    const getAllJo = vi.fn(async (fromStr: string, toStr: string) => {
-      if (fromStr === '20240101' && toStr === '20241231') {
-        return [
-          {
-            법령명한글: 'API에만 있는 다른 표기',
-            법령MST: '271253',
-            법령ID: '285',
-            공포일자: 20240401,
-            시행일자: 20230808,
-            조문번호: '3',
-            조문개정일: '20240401',
-            조문시행일: '20230808',
-          },
-        ];
-      }
-      return [];
-    });
+    const lsJoRows = [
+      {
+        법령명한글: 'API에만 있는 다른 표기',
+        법령MST: '271253',
+        법령ID: '285',
+        공포일자: 20240401,
+        시행일자: 20230808,
+        조문번호: '3',
+        조문개정일: '20240401',
+        조문시행일: '20230808',
+      },
+    ];
 
     const mockUpsert = vi.spyOn(db, 'upsertChangeLog').mockResolvedValue(undefined as any);
 
     vi.spyOn(lawClient, 'lawAPIClient', 'get').mockReturnValue({
-      getAllLawJoHistoryForRange: getAllJo,
+      getLawJoChangeHistoryRange: mockLsJoChangeHistoryRange(lsJoRows),
+      getAllLawJoHistoryForRange: vi.fn(),
       getLawComparison: vi.fn().mockResolvedValue(mockComparison),
       getLawChangeHistoryByDate: vi.fn(),
       getAllLawChangeHistoryForDate: vi.fn(),

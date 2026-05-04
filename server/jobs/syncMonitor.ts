@@ -53,7 +53,7 @@ export async function runSyncJob(): Promise<void> {
     if (laws.length > 0) {
       console.log('[SyncJob] 📋 Laws to process:');
       laws.forEach((law, idx) => {
-        console.log(`  ${idx + 1}. ${law.name} (ID: ${law.lawId})`);
+        console.log(`  ${idx + 1}. ${law.name} (externalId/법령ID: ${law.lawId})`);
       });
     }
     

@@ -6,7 +6,7 @@
  * - 법령명 → name
  * - 법령구분명이 '법률', '대통령령', '부령' → type: 'law'
  * - 그 외 (고시, 지침 등) → type: 'rule'
- * - 법령MST → externalId
+ * - CSV 법령ID → externalId (목록 API 법령ID와 일치). 없으면 법령MST.
  */
 
 import fs from 'fs';
@@ -110,15 +110,22 @@ async function seedMonitoredItems(csvFilePath: string): Promise<void> {
       try {
         const lawName = record.법령명.trim();
         const lawMST = record.법령MST.trim();
+        const lawApiId =
+          record.법령ID && String(record.법령ID).trim() !== ""
+            ? String(record.법령ID).trim()
+            : lawMST;
         const lawType = determineType(record.법령구분명);
 
         // 중복 확인
         const isDuplicate = existing.some(
-          item => item.externalId === lawMST && item.name === lawName
+          (item) =>
+            item.name === lawName ||
+            item.externalId === lawApiId ||
+            item.externalId === lawMST
         );
 
         if (isDuplicate) {
-          console.log(`[SeedData] ⏭️  스킵 (중복): ${lawName} (MST: ${lawMST})`);
+          console.log(`[SeedData] ⏭️  스킵 (중복): ${lawName} (법령ID: ${lawApiId}, MST: ${lawMST})`);
           skippedCount++;
           continue;
         }
@@ -128,11 +135,11 @@ async function seedMonitoredItems(csvFilePath: string): Promise<void> {
           name: lawName,
           type: lawType,
           isActive: 1,
-          externalId: lawMST,
+          externalId: lawApiId,
         });
 
         const typeBadge = lawType === 'law' ? '📜' : '📋';
-        console.log(`[SeedData] ${typeBadge} 삽입: ${lawName} (MST: ${lawMST}, Type: ${lawType})`);
+        console.log(`[SeedData] ${typeBadge} 삽입: ${lawName} (법령ID: ${lawApiId}, MST: ${lawMST}, Type: ${lawType})`);
         insertedCount++;
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);

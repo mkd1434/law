@@ -202,7 +202,12 @@ export async function initializeSeedData(options: SeedOptions = {}): Promise<voi
       try {
         const lawName = record.법령명.trim();
         const lawMST = record.법령MST.trim();
-        const lawType = determineType(lawName);  // lawName 기반 분류
+        /** lsJoHstInf 등 목록 API는 법령ID 기준이라 external_id에 법령ID를 둔다(MST와 숫자가 다름). */
+        const lawApiId =
+          record.법령ID && String(record.법령ID).trim() !== ""
+            ? String(record.법령ID).trim()
+            : lawMST;
+        const lawType = determineType(lawName); // lawName 기반 분류
 
         const existing = existingByName.get(lawName);
         if (existing) {
@@ -211,7 +216,7 @@ export async function initializeSeedData(options: SeedOptions = {}): Promise<voi
             .set({
               type: lawType,
               isActive: 1,
-              externalId: lawMST,
+              externalId: lawApiId,
             })
             .where(eq(monitoredItems.id, existing.id));
           updatedCount++;
@@ -227,7 +232,7 @@ export async function initializeSeedData(options: SeedOptions = {}): Promise<voi
           name: lawName,
           type: lawType,
           isActive: 1,
-          externalId: lawMST,
+          externalId: lawApiId,
         });
         insertedCount++;
         existingByName.set(lawName, { name: lawName });

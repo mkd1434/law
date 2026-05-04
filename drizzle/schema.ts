@@ -38,7 +38,7 @@ export const monitoredItems = mysqlTable("monitored_items", {
   type: mysqlEnum("type", ["law", "rule"]).notNull(),
   /** 모니터링 활성화 여부 */
   isActive: int("is_active").default(1).notNull(),
-  /** 법제처 API에서 사용하는 고유 ID (선택사항) */
+  /** 국가법령정보 연동용 ID: CSV 법령ID(lsJoHstInf·oldAndNew lawId). 구 데이터는 법령MST만 있을 수 있음. */
   externalId: varchar("external_id", { length: 255 }),
   /** 생성 일시 */
   createdAt: timestamp("created_at").defaultNow().notNull(),

@@ -69,7 +69,7 @@ describe('lawDetector — lsJoHstInf 연 구간 → oldAndNew·조문 메타', (
         return [
           {
             법령명한글: '전기공사업법',
-            법령ID: '282333',
+            법령ID: '285',
             공포일자: 20240401,
             시행일자: 20230808,
             조문번호: '3',
@@ -97,7 +97,7 @@ describe('lawDetector — lsJoHstInf 연 구간 → oldAndNew·조문 메타', (
     } as any);
 
     const result = await syncMonitoredLawsFromChangeHistory(
-      [{ itemId: 1, mst: '282333', name: '전기공사업법' }],
+      [{ itemId: 1, mst: '285', name: '전기공사업법' }],
       {
         lookbackYears: 3,
         delayAfterEachRegDtDayMs: { min: 0, max: 0 },
@@ -105,10 +105,10 @@ describe('lawDetector — lsJoHstInf 연 구간 → oldAndNew·조문 메타', (
     );
 
     expect(result.collected).toBe(1);
-    expect(getLawComparison).toHaveBeenCalledWith({ lawId: '282333' });
+    expect(getLawComparison).toHaveBeenCalledWith({ lawId: '285' });
     expect(mockUpsert).toHaveBeenCalledOnce();
     const arg = mockUpsert.mock.calls[0][0];
-    expect(arg.announcementNo).toMatch(/^JO-282333-3-20240401-20240401$/);
+    expect(arg.announcementNo).toMatch(/^JO-285-3-20240401-20240401$/);
     expect(arg.content).toContain('신조문목록');
     expect(arg.comparisonData).toMatchObject({
       joRevisionMeta: expect.objectContaining({ 조문번호: '3', 변경사유: '일부개정' }),
@@ -129,8 +129,8 @@ describe('lawDetector — lsJoHstInf 연 구간 → oldAndNew·조문 메타', (
         return [
           {
             법령명한글: 'API에만 있는 다른 표기',
-            법령MST: '282333',
-            법령ID: '999001',
+            법령MST: '271253',
+            법령ID: '285',
             공포일자: 20240401,
             시행일자: 20230808,
             조문번호: '3',
@@ -155,7 +155,7 @@ describe('lawDetector — lsJoHstInf 연 구간 → oldAndNew·조문 메타', (
     } as any);
 
     const result = await syncMonitoredLawsFromChangeHistory(
-      [{ itemId: 1, mst: '282333', name: '전기공사업법' }],
+      [{ itemId: 1, mst: '285', name: '전기공사업법' }],
       { lookbackYears: 3, delayAfterEachRegDtDayMs: { min: 0, max: 0 } }
     );
 

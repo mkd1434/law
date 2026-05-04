@@ -469,6 +469,16 @@ export async function syncMonitoredLawsFromChangeHistory(
     console.log(
       `[LawSync] chunk ${label} summary: apiRows=${rows.length}, rowsForMonitoredLaws=${rowsMatchingMonitored}`
     );
+    if (rows.length > 0 && rowsMatchingMonitored === 0) {
+      const sample = rows[0];
+      const keys =
+        sample && typeof sample === "object"
+          ? Object.keys(sample as object).slice(0, 25).join(", ")
+          : "(no row)";
+      console.warn(
+        `[LawSync] no row matched monitored laws in this chunk — sample row keys: ${keys}`
+      );
+    }
 
     if (chunkIndex < chunks.length && chunkDelay > 0) {
       console.log(`[LawSync] after chunk ${label} sleep ${chunkDelay}ms`);

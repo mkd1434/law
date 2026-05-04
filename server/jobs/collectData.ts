@@ -110,15 +110,22 @@ async function loadSeedData(csvFilePath: string): Promise<number> {
       try {
         const lawName = record.법령명.trim();
         const lawMST = record.법령MST.trim();
+        const lawApiId =
+          record.법령ID && String(record.법령ID).trim() !== ""
+            ? String(record.법령ID).trim()
+            : lawMST;
         const lawType = determineType(record.법령구분명);
 
         // 중복 확인
         const isDuplicate = existing.some(
-          item => item.externalId === lawMST && item.name === lawName
+          (item) =>
+            item.name === lawName ||
+            item.externalId === lawApiId ||
+            item.externalId === lawMST
         );
 
         if (isDuplicate) {
-          console.log(`⏭️  스킵 (중복): ${lawName} (MST: ${lawMST})`);
+          console.log(`⏭️  스킵 (중복): ${lawName} (법령ID: ${lawApiId}, MST: ${lawMST})`);
           skippedCount++;
           continue;
         }
@@ -128,11 +135,11 @@ async function loadSeedData(csvFilePath: string): Promise<number> {
           name: lawName,
           type: lawType,
           isActive: 1,
-          externalId: lawMST,
+          externalId: lawApiId,
         });
 
         const typeBadge = lawType === 'law' ? '📜' : '📋';
-        console.log(`${typeBadge} 삽입: ${lawName} (MST: ${lawMST}, Type: ${lawType})`);
+        console.log(`${typeBadge} 삽입: ${lawName} (법령ID: ${lawApiId}, MST: ${lawMST}, Type: ${lawType})`);
         insertedCount++;
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);

@@ -1,6 +1,6 @@
 /**
  * 법령 개정 감시
- * 1) lsJoHstInf: fromRegDt~toRegDt 기간 조회를 **달 단위 청크**로 순회 → 모니터링 법령만 필터
+ * 1) lsJoHstInf: fromRegDt~toRegDt 기간 조회를 **연 단위 청크**로 순회 → 모니터링 법령만 필터
  * 2) (선택) oldAndNew: 법령ID/MST로 신·구 본문 조회 — 실패해도 조문 메타·링크는 저장
  */
 
@@ -44,7 +44,7 @@ export function getSyncLookbackWindowDays():
   return null;
 }
 
-/** lsJoHstInf 월 구간 청크 처리 후 대기(ms). 기본 1000ms. */
+/** lsJoHstInf 연 구간 청크 처리 후 대기(ms). 기본 1000ms. */
 const LS_JO_CHUNK_AFTER_DELAY_MS = 1000;
 
 function resolveLookbackYears(override?: number): number {
@@ -128,7 +128,7 @@ function normalizeDateValue(value: unknown): string | null {
 export type SyncMonitoredLawsFromHistoryOptions = {
   lookbackYears?: number;
   /**
-   * 월 단위 lsJoHstInf 청크 처리 후 대기(ms). 기본 1000. 테스트 `{ min: 0, max: 0 }`.
+   * 연 단위 lsJoHstInf 청크 처리 후 대기(ms). 기본 1000. 테스트 `{ min: 0, max: 0 }`.
    */
   delayAfterEachRegDtDayMs?: { min: number; max: number };
 };
@@ -148,23 +148,24 @@ function startOfDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
-function endOfCalendarMonth(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth() + 1, 0);
+function endOfCalendarYear(d: Date): Date {
+  return new Date(d.getFullYear(), 11, 31);
 }
 
 function minDate(a: Date, b: Date): Date {
   return a.getTime() <= b.getTime() ? a : b;
 }
 
-function* eachMonthChunkInWindow(
+/** 달력 연도 기준: cursor가 속한 해의 12/31(또는 오늘)까지 한 청크 */
+function* eachYearChunkInWindow(
   windowStart: Date,
   today: Date
 ): Generator<{ from: Date; to: Date; label: string }> {
   let cursor = startOfDay(windowStart);
   const end = startOfDay(today);
   while (cursor.getTime() <= end.getTime()) {
-    const monthEnd = endOfCalendarMonth(cursor);
-    const to = minDate(monthEnd, end);
+    const yearEnd = startOfDay(endOfCalendarYear(cursor));
+    const to = minDate(yearEnd, end);
     const label = `${formatDateForAPI(cursor)}~${formatDateForAPI(to)}`;
     yield { from: new Date(cursor), to: new Date(to), label };
     cursor = addDays(to, 1);
@@ -264,7 +265,7 @@ export type MonitoredLawInput = {
 };
 
 /**
- * lsJoHstInf를 **월 단위 fromRegDt~toRegDt** 청크로 조회 → 모니터링 법령이면 저장.
+ * lsJoHstInf를 **연 단위 fromRegDt~toRegDt** 청크로 조회 → 모니터링 법령이면 저장.
  * (페이지마다 RateLimiter + 청크 간 지연 기본 1초)
  */
 export async function syncMonitoredLawsFromChangeHistory(
@@ -285,11 +286,11 @@ export async function syncMonitoredLawsFromChangeHistory(
   today.setHours(0, 0, 0, 0);
   const { windowStart, description: windowDesc } = resolveScanWindowStart(today, options);
 
-  const chunks = [...eachMonthChunkInWindow(windowStart, today)];
+  const chunks = [...eachYearChunkInWindow(windowStart, today)];
   const seenKeys = new Set<string>();
 
   console.log(
-    `[LawSync] window: ${windowDesc} — lsJoHstInf in ${chunks.length} month chunk(s)`
+    `[LawSync] window: ${windowDesc} — lsJoHstInf in ${chunks.length} year chunk(s)`
   );
 
   let chunkIndex = 0;

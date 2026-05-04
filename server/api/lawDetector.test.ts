@@ -42,7 +42,7 @@ describe('lawDetector — 시행일자 추출 (oldAndNew)', () => {
   });
 });
 
-describe('lawDetector — lsJoHstInf 월 구간 → oldAndNew·조문 메타', () => {
+describe('lawDetector — lsJoHstInf 연 구간 → oldAndNew·조문 메타', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
@@ -55,7 +55,7 @@ describe('lawDetector — lsJoHstInf 월 구간 → oldAndNew·조문 메타', (
     vi.restoreAllMocks();
   });
 
-  it('해당 월 구간에 매칭되는 조문 이력만 oldAndNew·joRevisionMeta 저장', async () => {
+  it('해당 연도 구간에 매칭되는 조문 이력만 oldAndNew·joRevisionMeta 저장', async () => {
     const mockComparison = {
       OldAndNewService: {
         신조문_기본정보: { 시행일자: '20230808' },
@@ -65,7 +65,7 @@ describe('lawDetector — lsJoHstInf 월 구간 → oldAndNew·조문 메타', (
     };
 
     const getAllJo = vi.fn(async (fromStr: string, toStr: string) => {
-      if (fromStr === '20240401' && toStr === '20240430') {
+      if (fromStr === '20240101' && toStr === '20241231') {
         return [
           {
             법령명한글: '전기공사업법',

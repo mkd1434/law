@@ -184,7 +184,7 @@ async function collectLawData(): Promise<void> {
     let totalCollected = 0;
     const allErrors: string[] = [];
 
-    console.log('\n📦 법령: lsJoHstInf 기간 조회·월 단위 청크 (모니터링 목록 일괄 매칭)');
+    console.log('\n📦 법령: lsJoHstInf 기간 조회·연 단위 청크 (모니터링 목록 일괄 매칭)');
     console.log('─'.repeat(50));
 
     try {

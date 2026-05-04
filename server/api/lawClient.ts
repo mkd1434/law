@@ -2,7 +2,7 @@
  * 국가법령정보 API 클라이언트
  *
  * 가이드 기준:
- * - 조문 개정 이력: lawSearch.do?target=lsJoHstInf&fromRegDt=&toRegDt= (기간 조회)
+ * - 조문 개정 이력: lawSearch.do?target=lsJoHstInf&fromRegDt=&toRegDt= (동기화는 스캔 구간을 연 단위로 잘라 조회)
  * - (레거시) 법령 변경이력 lsHstInf — 유지만 하고 동기화는 lsJoHstInf 사용
  * - 신구법 본문(법령): lawService.do?target=oldAndNew (ID 또는 MST)
  * - 행정규칙 목록: lawSearch.do?target=admrul (query, prmlYd 등)

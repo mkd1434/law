@@ -79,8 +79,8 @@ export async function runSyncJob(): Promise<void> {
         const result = await syncMonitoredLawsFromChangeHistory(
           laws.map((law) => ({
             itemId: law.itemId,
-            mst: law.lawId,
-            name: law.name,
+            mst: (law.lawId ?? '').toString().trim(),
+            name: (law.name ?? '').trim(),
           }))
         );
         console.log(

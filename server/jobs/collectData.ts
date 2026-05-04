@@ -198,8 +198,8 @@ async function collectLawData(): Promise<void> {
       const result = await syncMonitoredLawsFromChangeHistory(
         laws.map((law) => ({
           itemId: law.id,
-          mst: law.externalId || '',
-          name: law.name,
+          mst: (law.externalId ?? '').toString().trim(),
+          name: (law.name ?? '').trim(),
         }))
       );
       totalDetected = result.detected;

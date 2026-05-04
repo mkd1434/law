@@ -135,13 +135,146 @@ export type SyncMonitoredLawsFromHistoryOptions = {
   delayAfterEachRegDtDayMs?: { min: number; max: number };
 };
 
+/** JSON 문자열이면 파싱, 아니면 그대로 */
+function parseMaybeJson(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const t = value.trim();
+  if (t.length === 0) return value;
+  if (
+    (t.startsWith("{") && t.endsWith("}")) ||
+    (t.startsWith("[") && t.endsWith("]"))
+  ) {
+    try {
+      return JSON.parse(t);
+    } catch {
+      return value;
+    }
+  }
+  return value;
+}
+
+/** 법령정보·조문정보 등 중첩/JSON 문자열을 평탄한 레코드로 합침 (나중 값이 우선) */
+function parsedNestedBlock(value: unknown): Record<string, unknown> {
+  const parsed = parseMaybeJson(value);
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    return { ...(parsed as Record<string, unknown>) };
+  }
+  if (Array.isArray(parsed)) {
+    const merged: Record<string, unknown> = {};
+    for (const el of parsed) {
+      if (el && typeof el === "object" && !Array.isArray(el)) {
+        Object.assign(merged, el as Record<string, unknown>);
+      }
+    }
+    return merged;
+  }
+  return {};
+}
+
+/**
+ * 트리 전체에서 스칼라(문자열·숫자·불리언)만 모은다.
+ * `법령정보: { 기본정보: { 법령ID } }` 같이 한 단계 더 감싼 응답에서도 법령ID·조문번호를 찾기 위함.
+ */
+function collectDescendantScalars(
+  node: unknown,
+  depth: number,
+  visited: WeakSet<object>
+): Record<string, unknown> {
+  const acc: Record<string, unknown> = {};
+  if (depth <= 0 || node == null) return acc;
+  const n = parseMaybeJson(node);
+  if (Array.isArray(n)) {
+    for (const el of n) {
+      Object.assign(acc, collectDescendantScalars(el, depth - 1, visited));
+    }
+    return acc;
+  }
+  if (typeof n !== "object") return acc;
+  if (visited.has(n as object)) return acc;
+  visited.add(n as object);
+  for (const [k, v] of Object.entries(n as Record<string, unknown>)) {
+    if (v != null && typeof v === "object") {
+      Object.assign(acc, collectDescendantScalars(v, depth - 1, visited));
+      continue;
+    }
+    acc[k] = v;
+  }
+  return acc;
+}
+
+/**
+ * lsJoHstInf 실응답은 루트에 `id`만 있고 `법령ID`·`법령명한글`이 `법령정보`/`조문정보` 안에 오는 경우가 많음.
+ * 한 단계 더 중첩된 객체도 훑어 매칭·조문키·일자 추출에 쓴다.
+ */
+export function flattenLsJoRowForMatching(row: any): Record<string, unknown> {
+  if (!row || typeof row !== "object") return {};
+  const shallow = { ...(row as Record<string, unknown>) };
+  const oneLevel = {
+    ...parsedNestedBlock(row.법령정보),
+    ...parsedNestedBlock(row.조문정보),
+  };
+  const deep = collectDescendantScalars(row, 16, new WeakSet());
+  return { ...shallow, ...oneLevel, ...deep };
+}
+
+/** DB externalId와 API 숫자/앞자리 0 차이 허용 */
+function lawExternalIdsMatch(rowId: string, monitored: string): boolean {
+  const a = rowId.replace(/\s/g, "");
+  const b = monitored.replace(/\s/g, "");
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (/^\d+$/.test(a) && /^\d+$/.test(b)) {
+    try {
+      return BigInt(a) === BigInt(b);
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+/** lsJo 행에서 8자리 시행·공포일 후보 (필드명이 명세와 다를 때 보조) */
+function effectiveDateCandidatesFromFlat(flat: Record<string, unknown>): string | null {
+  const keys = [
+    flat.조문시행일,
+    flat.조문시행일자,
+    flat.시행일자,
+    flat.공포일자,
+    flat.조문공포일자,
+    flat.efYd,
+    flat.efYD,
+    flat.시행일,
+    flat.promulgationDate,
+  ];
+  for (const k of keys) {
+    const n = normalizeDateValue(k);
+    if (n) return n;
+  }
+  const promCandidates: unknown[] = [];
+  for (const [k, v] of Object.entries(flat)) {
+    if (v == null || typeof v === "object") continue;
+    const nk = k.replace(/\s/g, "").toLowerCase();
+    if (nk.includes("시행") || nk.includes("efyd")) {
+      const n = normalizeDateValue(v);
+      if (n) return n;
+    }
+    if (nk.includes("공포")) promCandidates.push(v);
+  }
+  for (const v of promCandidates) {
+    const n = normalizeDateValue(v);
+    if (n) return n;
+  }
+  return null;
+}
+
 function lawHistoryRowName(row: any): string | undefined {
+  const flat = flattenLsJoRowForMatching(row);
   const v =
-    row?.법령명한글 ??
-    row?.법령명 ??
-    row?.lawNm ??
-    row?.lawnm ??
-    row?.["법령명(한글)"];
+    flat.법령명한글 ??
+    flat.법령명 ??
+    flat.lawNm ??
+    flat.lawnm ??
+    flat["법령명(한글)"];
   if (v == null) return undefined;
   const s = String(v).trim();
   return s === "" ? undefined : s;
@@ -164,6 +297,7 @@ function monitoredLawMatchesRow(row: any, monitoredName: string): boolean {
  * lsJoHstInf는 `법령ID`만 있고 MST 키가 다르게 올 수 있어 MST·ID·일련번호를 모두 본다.
  */
 function rowCandidateExternalIds(row: any): string[] {
+  const flat = flattenLsJoRowForMatching(row);
   const keys = [
     "법령MST",
     "MST",
@@ -176,10 +310,24 @@ function rowCandidateExternalIds(row: any): string[] {
   ];
   const out: string[] = [];
   for (const k of keys) {
-    const v = row?.[k];
+    const v = flat[k];
     if (v == null || v === "") continue;
     const s = String(v).trim();
     if (s) out.push(s);
+  }
+  for (const [k, val] of Object.entries(flat)) {
+    if (val == null || val === "") continue;
+    const nk = k.replace(/\s/g, "").toLowerCase();
+    if (nk === "id" || nk === "_id") continue;
+    if (
+      nk === "법령id" ||
+      nk === "lawid" ||
+      nk.includes("법령mst") ||
+      nk.includes("법령일련")
+    ) {
+      const s = String(val).trim();
+      if (s) out.push(s);
+    }
   }
   return [...new Set(out)];
 }
@@ -189,7 +337,7 @@ function matchMonitoredLawRow(row: any, law: MonitoredLawInput): boolean {
   const ext = String(law.mst ?? "").trim();
   if (ext) {
     for (const id of rowCandidateExternalIds(row)) {
-      if (id === ext) return true;
+      if (lawExternalIdsMatch(id, ext)) return true;
     }
   }
   return monitoredLawMatchesRow(row, law.name);
@@ -226,7 +374,8 @@ function* eachYearChunkInWindow(
 /** lsJoHstInf 행 → UI·저장용 조문 메타 (명세 필드명) */
 export function buildJoRevisionMeta(row: any): Record<string, unknown> {
   if (!row || typeof row !== "object") return {};
-  const r = row as Record<string, unknown>;
+  const r = flattenLsJoRowForMatching(row);
+  const raw = row as Record<string, unknown>;
   const detailLink =
     r["조문변경이력상세링크"] ?? r.조문변경이력상세링크 ?? r["조문변경이력\n상세링크"];
   return {
@@ -237,7 +386,7 @@ export function buildJoRevisionMeta(row: any): Record<string, unknown> {
     조문변경이력상세링크: detailLink,
     조문개정일: r.조문개정일 ?? r["조문제개정일"],
     조문시행일: r.조문시행일,
-    조문정보: r.조문정보,
+    조문정보: raw.조문정보 ?? r.조문정보,
     조문번호: r.조문번호 ?? r["jo num"] ?? r["jo_num"],
     법령명한글: r.법령명한글,
     법령ID: r.법령ID,
@@ -245,12 +394,13 @@ export function buildJoRevisionMeta(row: any): Record<string, unknown> {
 }
 
 function joRowStableParts(row: any): { lawId: string; jo: string; rev: string } {
-  const lawIdRaw = row?.법령ID ?? row?.["법령ID"];
+  const flat = flattenLsJoRowForMatching(row);
+  const lawIdRaw = flat.법령ID ?? flat["법령ID"];
   const lawId = lawIdRaw != null ? String(lawIdRaw).trim() : "";
-  const joRaw = row?.조문번호 ?? row?.["jo num"] ?? row?.jo_num ?? "";
+  const joRaw = flat.조문번호 ?? flat["jo num"] ?? flat.jo_num ?? "";
   const jo = String(joRaw).replace(/\s/g, "");
   const rev =
-    normalizeDateValue(row?.조문개정일 ?? row?.["조문제개정일"]) ?? "norev";
+    normalizeDateValue(flat.조문개정일 ?? flat["조문제개정일"]) ?? "norev";
   return { lawId, jo: jo || "jo", rev };
 }
 
@@ -394,24 +544,27 @@ export async function syncMonitoredLawsFromChangeHistory(
           if (!monitored) continue;
           rowsMatchingMonitored += 1;
 
-          const lawIdRaw = row.법령ID ?? row["법령ID"];
+          const flat = flattenLsJoRowForMatching(row);
+          const lawIdRaw = flat.법령ID ?? flat["법령ID"];
           const lawId =
             lawIdRaw != null && String(lawIdRaw).trim() !== ""
               ? String(lawIdRaw).trim()
               : undefined;
 
           const { jo, rev } = joRowStableParts(row);
-          const dedupeKey = `${monitored.itemId}|${lawId ?? monitored.mst}|${jo}|${rev}`;
+          const rowDedupeToken =
+            flat.id != null
+              ? String(flat.id).trim()
+              : flat.일련번호 != null
+                ? String(flat.일련번호).trim()
+                : "";
+          const dedupeKey = `${monitored.itemId}|${lawId ?? monitored.mst}|${jo}|${rev}|${rowDedupeToken}`;
           if (seenKeys.has(dedupeKey)) continue;
           seenKeys.add(dedupeKey);
 
           detected++;
 
-          const effectiveFromRow =
-            normalizeDateValue(row.조문시행일) ??
-            normalizeDateValue(row.조문시행일자) ??
-            normalizeDateValue(row.시행일자) ??
-            normalizeDateValue(row.공포일자);
+          const effectiveFromRow = effectiveDateCandidatesFromFlat(flat);
 
           let comparison: any = null;
           if (!effectiveFromRow) {
@@ -444,7 +597,7 @@ export async function syncMonitoredLawsFromChangeHistory(
             continue;
           }
 
-          const promulgation = normalizeDateValue(row.공포일자) ?? "unk";
+          const promulgation = normalizeDateValue(flat.공포일자) ?? "unk";
 
           try {
             const year = parseInt(effectiveDateStr.substring(0, 4), 10);
@@ -526,8 +679,13 @@ export async function syncMonitoredLawsFromChangeHistory(
         sampleRowForDebug && typeof sampleRowForDebug === "object"
           ? Object.keys(sampleRowForDebug as object).slice(0, 25).join(", ")
           : "(no row)";
+      const flatKeys =
+        sampleRowForDebug && typeof sampleRowForDebug === "object"
+          ? Object.keys(flattenLsJoRowForMatching(sampleRowForDebug)).slice(0, 35).join(", ")
+          : "";
       console.warn(
-        `[LawSync] no row matched monitored laws in this chunk — sample row keys: ${keys}`
+        `[LawSync] no row matched monitored laws in this chunk — sample row keys: ${keys}` +
+          (flatKeys ? ` | flattened keys: ${flatKeys}` : "")
       );
     }
 

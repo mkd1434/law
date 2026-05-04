@@ -38,8 +38,8 @@ async function runTestSync() {
 
     const laws = items.map((item) => ({
       itemId: item.id,
-      mst: item.externalId || '',
-      name: item.name,
+      mst: (item.externalId ?? '').toString().trim(),
+      name: (item.name ?? '').trim(),
     }));
 
     console.log('[TestSync] lsJoHstInf 연 구간 일괄 스캔 시작...\n');

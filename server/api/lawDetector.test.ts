@@ -114,4 +114,51 @@ describe('lawDetector — lsJoHstInf 연 구간 → oldAndNew·조문 메타', (
       joRevisionMeta: expect.objectContaining({ 조문번호: '3', 변경사유: '일부개정' }),
     });
   });
+
+  it('법령명이 목록과 달라도 법령ID(MST)가 같으면 저장', async () => {
+    const mockComparison = {
+      OldAndNewService: {
+        신조문_기본정보: { 시행일자: '20230808' },
+        신조문목록: [],
+        구조문목록: [],
+      },
+    };
+
+    const getAllJo = vi.fn(async (fromStr: string, toStr: string) => {
+      if (fromStr === '20240101' && toStr === '20241231') {
+        return [
+          {
+            법령명한글: 'API에만 있는 다른 표기',
+            법령ID: 282333,
+            공포일자: 20240401,
+            시행일자: 20230808,
+            조문번호: '3',
+            조문개정일: '20240401',
+            조문시행일: '20230808',
+          },
+        ];
+      }
+      return [];
+    });
+
+    const mockUpsert = vi.spyOn(db, 'upsertChangeLog').mockResolvedValue(undefined as any);
+
+    vi.spyOn(lawClient, 'lawAPIClient', 'get').mockReturnValue({
+      getAllLawJoHistoryForRange: getAllJo,
+      getLawComparison: vi.fn().mockResolvedValue(mockComparison),
+      getLawChangeHistoryByDate: vi.fn(),
+      getAllLawChangeHistoryForDate: vi.fn(),
+      searchAdminRulesPage: vi.fn(),
+      searchAdminRulesAll: vi.fn(),
+      getAdminRuleComparison: vi.fn(),
+    } as any);
+
+    const result = await syncMonitoredLawsFromChangeHistory(
+      [{ itemId: 1, mst: '282333', name: '전기공사업법' }],
+      { lookbackYears: 3, delayAfterEachRegDtDayMs: { min: 0, max: 0 } }
+    );
+
+    expect(result.collected).toBe(1);
+    expect(mockUpsert).toHaveBeenCalledOnce();
+  });
 });

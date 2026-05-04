@@ -1,6 +1,7 @@
 /**
  * 법령 개정 감시
  * 1) lsJoHstInf: fromRegDt~toRegDt 기간 조회를 **연 단위 청크**로 순회 → 모니터링 법령만 필터
+ *    (행의 **법령ID = 모니터링 externalId(MST)** 우선 매칭, 명칭은 보조)
  * 2) (선택) oldAndNew: 법령ID/MST로 신·구 본문 조회 — 실패해도 조문 메타·링크는 저장
  */
 
@@ -134,14 +135,51 @@ export type SyncMonitoredLawsFromHistoryOptions = {
 };
 
 function lawHistoryRowName(row: any): string | undefined {
-  return row?.법령명한글 ?? row?.법령명;
+  const v =
+    row?.법령명한글 ??
+    row?.법령명 ??
+    row?.lawNm ??
+    row?.lawnm ??
+    row?.["법령명(한글)"];
+  if (v == null) return undefined;
+  const s = String(v).trim();
+  return s === "" ? undefined : s;
+}
+
+function collapseSpaces(s: string): string {
+  return s.replace(/\s+/g, "");
 }
 
 function monitoredLawMatchesRow(row: any, monitoredName: string): boolean {
   const rowName = lawHistoryRowName(row)?.trim();
   const name = monitoredName.trim();
   if (!rowName || !name) return false;
-  return rowName === name || rowName.includes(name) || name.includes(rowName);
+  if (rowName === name || rowName.includes(name) || name.includes(rowName)) return true;
+  return collapseSpaces(rowName) === collapseSpaces(name);
+}
+
+/** API 행에서 모니터링 MST(법령ID)와 비교할 후보 값들 */
+function rowCandidateLawIds(row: any): string[] {
+  const keys = ["법령ID", "lawId", "LC", "lsId", "법령일련번호", "MST"];
+  const out: string[] = [];
+  for (const k of keys) {
+    const v = row?.[k];
+    if (v == null || v === "") continue;
+    const s = String(v).trim();
+    if (s) out.push(s);
+  }
+  return [...new Set(out)];
+}
+
+/** lsJoHstInf 행 ↔ 모니터링: **법령ID = MST 우선**, 없으면 법령명 부분일치 */
+function matchMonitoredLawRow(row: any, law: MonitoredLawInput): boolean {
+  const mst = String(law.mst ?? "").trim();
+  if (mst) {
+    for (const id of rowCandidateLawIds(row)) {
+      if (id === mst) return true;
+    }
+  }
+  return monitoredLawMatchesRow(row, law.name);
 }
 
 function startOfDay(d: Date): Date {
@@ -313,7 +351,7 @@ export async function syncMonitoredLawsFromChangeHistory(
     }
 
     for (const row of rows) {
-      const monitored = laws.find((l) => monitoredLawMatchesRow(row, l.name));
+      const monitored = laws.find((l) => matchMonitoredLawRow(row, l));
       if (!monitored) continue;
 
       const lawIdRaw = row.법령ID ?? row["법령ID"];
@@ -346,7 +384,9 @@ export async function syncMonitoredLawsFromChangeHistory(
       const joMeta = buildJoRevisionMeta(row);
       const effectiveDateStr =
         normalizeDateValue(row.조문시행일) ??
+        normalizeDateValue(row.조문시행일자) ??
         normalizeDateValue(row.시행일자) ??
+        normalizeDateValue(row.공포일자) ??
         (comparison
           ? extractEffectiveDateFromComparison(comparison) ??
             normalizeDateValue(comparison?._extractedEffectiveDate)

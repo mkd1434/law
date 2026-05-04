@@ -1,7 +1,7 @@
 /**
  * 법령 개정 감시
  * 1) lsJoHstInf: fromRegDt~toRegDt 기간 조회를 **연 단위 청크**로 순회 → 모니터링 법령만 필터
- *    (행의 **법령ID = 모니터링 externalId(MST)** 우선 매칭, 명칭은 보조)
+ *    (행의 **법령MST/법령ID 등 = 모니터링 externalId(=CSV 법령MST)** 우선 매칭, 명칭은 보조)
  * 2) (선택) oldAndNew: 법령ID/MST로 신·구 본문 조회 — 실패해도 조문 메타·링크는 저장
  */
 
@@ -158,9 +158,21 @@ function monitoredLawMatchesRow(row: any, monitoredName: string): boolean {
   return collapseSpaces(rowName) === collapseSpaces(name);
 }
 
-/** API 행에서 모니터링 MST(법령ID)와 비교할 후보 값들 */
-function rowCandidateLawIds(row: any): string[] {
-  const keys = ["법령ID", "lawId", "LC", "lsId", "법령일련번호", "MST"];
+/**
+ * API 행에서 모니터링 `externalId`(seed·CSV의 **법령MST**)와 맞출 후보 값들.
+ * lsJoHstInf는 `법령ID`만 있고 MST 키가 다르게 올 수 있어 MST·ID·일련번호를 모두 본다.
+ */
+function rowCandidateExternalIds(row: any): string[] {
+  const keys = [
+    "법령MST",
+    "MST",
+    "mst",
+    "법령일련번호",
+    "lsId",
+    "LC",
+    "법령ID",
+    "lawId",
+  ];
   const out: string[] = [];
   for (const k of keys) {
     const v = row?.[k];
@@ -171,12 +183,12 @@ function rowCandidateLawIds(row: any): string[] {
   return [...new Set(out)];
 }
 
-/** lsJoHstInf 행 ↔ 모니터링: **법령ID = MST 우선**, 없으면 법령명 부분일치 */
+/** lsJoHstInf 행 ↔ 모니터링: **externalId(법령MST)와 행의 MST/법령ID 등 일치** 우선, 없으면 법령명 */
 function matchMonitoredLawRow(row: any, law: MonitoredLawInput): boolean {
-  const mst = String(law.mst ?? "").trim();
-  if (mst) {
-    for (const id of rowCandidateLawIds(row)) {
-      if (id === mst) return true;
+  const ext = String(law.mst ?? "").trim();
+  if (ext) {
+    for (const id of rowCandidateExternalIds(row)) {
+      if (id === ext) return true;
     }
   }
   return monitoredLawMatchesRow(row, law.name);
@@ -350,9 +362,11 @@ export async function syncMonitoredLawsFromChangeHistory(
       continue;
     }
 
+    let rowsMatchingMonitored = 0;
     for (const row of rows) {
       const monitored = laws.find((l) => matchMonitoredLawRow(row, l));
       if (!monitored) continue;
+      rowsMatchingMonitored += 1;
 
       const lawIdRaw = row.법령ID ?? row["법령ID"];
       const lawId =
@@ -452,11 +466,19 @@ export async function syncMonitoredLawsFromChangeHistory(
       }
     }
 
+    console.log(
+      `[LawSync] chunk ${label} summary: apiRows=${rows.length}, rowsForMonitoredLaws=${rowsMatchingMonitored}`
+    );
+
     if (chunkIndex < chunks.length && chunkDelay > 0) {
       console.log(`[LawSync] after chunk ${label} sleep ${chunkDelay}ms`);
       await sleepMs(chunkDelay);
     }
   }
+
+  console.log(
+    `[LawSync] finished: detected=${detected}, collected=${collected}, errorLines=${errors.length}`
+  );
 
   return { detected, collected, errors };
 }

@@ -129,7 +129,8 @@ describe('lawDetector — lsJoHstInf 연 구간 → oldAndNew·조문 메타', (
         return [
           {
             법령명한글: 'API에만 있는 다른 표기',
-            법령ID: 282333,
+            법령MST: '282333',
+            법령ID: '999001',
             공포일자: 20240401,
             시행일자: 20230808,
             조문번호: '3',
